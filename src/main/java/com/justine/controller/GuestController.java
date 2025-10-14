@@ -12,10 +12,13 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/guests")
-@RequiredArgsConstructor
 public class GuestController {
 
     private final GuestService guestService;
+
+    public GuestController(GuestService guestService){
+        this.guestService = guestService;
+    }
 
     @PostMapping
     public ResponseEntity<GuestResponseDTO> createGuest(@RequestBody GuestDTO dto) {

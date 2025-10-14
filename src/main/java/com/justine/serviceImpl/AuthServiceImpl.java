@@ -21,6 +21,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -125,6 +126,79 @@ public class AuthServiceImpl implements AuthService {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Staff registration failed");
         }
     }
+
+    @Override
+    public ResponseEntity<?> updateUser(Long id, Map<String, Object> updates, Authentication authentication) {
+        try {
+            String authUserId = authentication.getName();
+            boolean isAdmin = authentication.getAuthorities().stream()
+                    .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+            boolean isStaff = authentication.getAuthorities().stream()
+                    .anyMatch(a -> a.getAuthority().contains("STAFF") || a.getAuthority().contains("MANAGER"));
+
+            // Check ownership or admin privileges
+            if (!isAdmin && !authUserId.equals(String.valueOf(id))) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "You can only update your own profile"));
+            }
+
+            if (isStaff) {
+                Optional<Staff> staffOpt = staffRepository.findById(id);
+                if (staffOpt.isEmpty()) {
+                    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "Staff not found"));
+                }
+
+                Staff staff = staffOpt.get();
+
+                if (updates.containsKey("fullName")) staff.setFullName((String) updates.get("fullName"));
+                if (updates.containsKey("phoneNumber")) staff.setPhoneNumber((String) updates.get("phoneNumber"));
+                if (updates.containsKey("gender")) staff.setGender((String) updates.get("gender"));
+
+                // Only admins can modify roles
+                if (updates.containsKey("role")) {
+                    if (!isAdmin) {
+                        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Only admins can update roles"));
+                    }
+                    String newRole = (String) updates.get("role");
+                    try {
+                        staff.setRole(StaffRole.valueOf(newRole.toUpperCase()));
+                    } catch (IllegalArgumentException e) {
+                        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Invalid role"));
+                    }
+                }
+
+                staffRepository.save(staff);
+                auditLogService.logAuthService(staff.getId(), "UPDATE_PROFILE_SUCCESS", Map.of("id", id, "type", "STAFF"));
+                return buildStaffResponse(staff);
+
+            } else {
+                Optional<Guest> guestOpt = guestRepository.findById(id);
+                if (guestOpt.isEmpty()) {
+                    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "Guest not found"));
+                }
+
+                Guest guest = guestOpt.get();
+
+                if (updates.containsKey("fullName")) guest.setFullName((String) updates.get("fullName"));
+                if (updates.containsKey("phoneNumber")) guest.setPhoneNumber((String) updates.get("phoneNumber"));
+                if (updates.containsKey("gender")) guest.setGender((String) updates.get("gender"));
+
+                // Guests cannot change their role
+                if (updates.containsKey("role")) {
+                    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Guests cannot change their role"));
+                }
+
+                guestRepository.save(guest);
+                auditLogService.logAuthService(guest.getId(), "UPDATE_PROFILE_SUCCESS", Map.of("id", id, "type", "GUEST"));
+                return buildGuestResponse(guest);
+            }
+
+        } catch (Exception e) {
+            log.error("Error updating user: {}", e.getMessage());
+            auditLogService.logAuthService(null, "UPDATE_PROFILE_ERROR", Map.of("error", e.getMessage()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", "Failed to update profile"));
+        }
+    }
+
 
     // ------------------ Login ------------------
     @Override

@@ -52,8 +52,9 @@ public class CustomUserDetailsService implements UserDetailsService {
     }
 
     private UserDetails mapStaffToUserDetails(Staff staff) {
+
         return User.builder()
-                .username(staff.getId().toString()) // Use ID as username for JWT
+                .username(staff.getId().toString())
                 .password(staff.getPassword())
                 .authorities("ROLE_" + staff.getRole().name())
                 .build();

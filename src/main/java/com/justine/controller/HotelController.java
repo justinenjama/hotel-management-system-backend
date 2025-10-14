@@ -13,10 +13,13 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/hotels")
-@RequiredArgsConstructor
 public class HotelController {
 
     private final HotelService hotelService;
+
+    public HotelController(HotelService hotelService) {
+        this.hotelService = hotelService;
+    }
 
     @PostMapping
     public ResponseEntity<HotelResponseDTO> createHotel(@RequestBody HotelRequestDTO dto) {

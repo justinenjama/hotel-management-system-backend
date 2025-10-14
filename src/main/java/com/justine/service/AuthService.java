@@ -5,6 +5,9 @@ import com.justine.dtos.request.LoginRequestDTO;
 import com.justine.enums.StaffRole;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+
+import java.util.Map;
 
 public interface AuthService {
 
@@ -19,4 +22,6 @@ public interface AuthService {
     ResponseEntity<?> getCurrentUserById(String userId, boolean isStaff);
 
     ResponseEntity<?> registerStaff(GuestDTO staffDTO, StaffRole role);
+
+    ResponseEntity<?> updateUser(Long id, Map<String, Object> updates, Authentication authentication);
 }

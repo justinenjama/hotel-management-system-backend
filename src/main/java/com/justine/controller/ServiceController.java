@@ -14,10 +14,13 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/services")
-@RequiredArgsConstructor
 public class ServiceController {
 
     private final ServiceService serviceService;
+
+    public ServiceController(ServiceService serviceService) {
+        this.serviceService = serviceService;
+    }
 
     @PostMapping
     public ResponseEntity<ServiceResponseDTO> addService(@Valid @RequestBody ServiceRequestDTO dto, Authentication auth) {

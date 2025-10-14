@@ -15,10 +15,13 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/restaurant")
-@RequiredArgsConstructor
 public class RestaurantController {
 
     private final RestaurantService restaurantService;
+
+    public RestaurantController(RestaurantService restaurantService) {
+        this.restaurantService = restaurantService;
+    }
 
     @PostMapping("/food")
     public ResponseEntity<FoodItemResponseDTO> addFoodItem(@RequestBody FoodItemRequestDTO dto, Authentication auth) {

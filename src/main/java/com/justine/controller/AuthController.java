@@ -70,4 +70,18 @@ public class AuthController {
 
         return authService.getCurrentUserById(userId, isStaff);
     }
+
+    @PutMapping("/update/{id}")
+    public ResponseEntity<?> updateUser(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> updates,
+            Authentication authentication
+    ) {
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Unauthenticated"));
+        }
+
+        return authService.updateUser(id, updates, authentication);
+    }
+
 }

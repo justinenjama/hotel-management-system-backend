@@ -12,10 +12,13 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/staff")
-@RequiredArgsConstructor
 public class StaffController {
 
     private final StaffService staffService;
+
+    public StaffController(StaffService staffService) {
+        this.staffService = staffService;
+    }
 
     @PostMapping
     public ResponseEntity<StaffResponseDTO> addStaff(@RequestBody StaffRequestDTO dto, Principal principal) {
