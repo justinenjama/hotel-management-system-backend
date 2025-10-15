@@ -20,7 +20,6 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class GuestServiceImpl implements GuestService {
 
@@ -29,6 +28,14 @@ public class GuestServiceImpl implements GuestService {
     private final RestaurantOrderRepository orderRepository;
     private final PasswordEncoder passwordEncoder;
     private final AuditLogService auditLogService;
+
+    public GuestServiceImpl(GuestRepository guestRepository, BookingRepository bookingRepository, RestaurantOrderRepository orderRepository, PasswordEncoder passwordEncoder, AuditLogService auditLogService) {
+        this.guestRepository = guestRepository;
+        this.bookingRepository = bookingRepository;
+        this.orderRepository = orderRepository;
+        this.passwordEncoder = passwordEncoder;
+        this.auditLogService = auditLogService;
+    }
 
     private boolean isAdmin(String email) {
         return guestRepository.findByEmail(email)

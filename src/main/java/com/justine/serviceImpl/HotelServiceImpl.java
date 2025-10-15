@@ -17,13 +17,18 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class HotelServiceImpl implements HotelService {
 
     private final HotelRepository hotelRepository;
     private final RoomRepository roomRepository;
     private final AuditLogService auditLogService;
+
+    public HotelServiceImpl(HotelRepository hotelRepository, RoomRepository roomRepository, AuditLogService auditLogService) {
+        this.hotelRepository = hotelRepository;
+        this.roomRepository = roomRepository;
+        this.auditLogService = auditLogService;
+    }
 
     /** Ensure only ADMIN can perform hotel operations */
     private void checkAdminAccess() {

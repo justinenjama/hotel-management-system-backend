@@ -20,7 +20,6 @@ import java.time.LocalDate;
 import java.util.Map;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 @Transactional
 public class InvoiceServiceImpl implements InvoiceService {
@@ -29,6 +28,13 @@ public class InvoiceServiceImpl implements InvoiceService {
     private final BookingRepository bookingRepository;
     private final InvoiceServiceHelper invoiceServiceHelper;
     private final AuditLogService auditLogService;
+
+    public InvoiceServiceImpl(InvoiceRepository invoiceRepository, BookingRepository bookingRepository, InvoiceServiceHelper invoiceServiceHelper, AuditLogService auditLogService) {
+        this.invoiceRepository = invoiceRepository;
+        this.bookingRepository = bookingRepository;
+        this.invoiceServiceHelper = invoiceServiceHelper;
+        this.auditLogService = auditLogService;
+    }
 
     // ------------------ Authorization helpers ------------------
     private boolean isAdmin() {

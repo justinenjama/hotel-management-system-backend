@@ -18,11 +18,15 @@ import java.util.Arrays;
 import java.util.Optional;
 
 @Component
-@RequiredArgsConstructor
 public class JwtCookieFilter extends OncePerRequestFilter {
 
     private final JwtUtils jwtUtils;
     private final CustomUserDetailsService userDetailsService;
+
+    public JwtCookieFilter(JwtUtils jwtUtils, CustomUserDetailsService userDetailsService) {
+        this.jwtUtils = jwtUtils;
+        this.userDetailsService = userDetailsService;
+    }
 
     @Override
     protected void doFilterInternal(

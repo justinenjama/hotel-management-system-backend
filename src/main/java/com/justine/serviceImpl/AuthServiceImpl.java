@@ -28,7 +28,6 @@ import org.springframework.stereotype.Service;
 
 @Service
 @Slf4j
-@RequiredArgsConstructor
 public class AuthServiceImpl implements AuthService {
 
     private final GuestRepository guestRepository;
@@ -36,6 +35,14 @@ public class AuthServiceImpl implements AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtUtils jwtUtils;
     private final AuditLogService auditLogService;
+
+    public AuthServiceImpl(GuestRepository guestRepository, StaffRepository staffRepository, PasswordEncoder passwordEncoder, JwtUtils jwtUtils, AuditLogService auditLogService) {
+        this.guestRepository = guestRepository;
+        this.staffRepository = staffRepository;
+        this.passwordEncoder = passwordEncoder;
+        this.jwtUtils = jwtUtils;
+        this.auditLogService = auditLogService;
+    }
 
     // ------------------ Register Guest ------------------
     @Override

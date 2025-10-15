@@ -12,11 +12,15 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 
 @Service
-@RequiredArgsConstructor
 public class CustomUserDetailsService implements UserDetailsService {
 
     private final GuestRepository guestRepository;
     private final StaffRepository staffRepository;
+
+    public CustomUserDetailsService(GuestRepository guestRepository, StaffRepository staffRepository) {
+        this.guestRepository = guestRepository;
+        this.staffRepository = staffRepository;
+    }
 
     /**
      * Load user by email (not used by cookies, but required by interface)

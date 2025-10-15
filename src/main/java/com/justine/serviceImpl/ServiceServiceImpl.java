@@ -18,13 +18,19 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @org.springframework.stereotype.Service
-@RequiredArgsConstructor
 public class ServiceServiceImpl implements ServiceService {
 
     private final ServiceRepository serviceRepository;
     private final GuestRepository guestRepository;
     private final BookingRepository bookingRepository;
     private final AuditLogService auditLogService;
+
+    public ServiceServiceImpl(ServiceRepository serviceRepository, GuestRepository guestRepository, BookingRepository bookingRepository, AuditLogService auditLogService) {
+        this.serviceRepository = serviceRepository;
+        this.guestRepository = guestRepository;
+        this.bookingRepository = bookingRepository;
+        this.auditLogService = auditLogService;
+    }
 
     // Utility: Check if user is admin
     private boolean isAdmin(String email) {

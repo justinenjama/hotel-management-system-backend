@@ -19,7 +19,6 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class RestaurantServiceImpl implements RestaurantService {
 
@@ -28,6 +27,14 @@ public class RestaurantServiceImpl implements RestaurantService {
     private final RestaurantOrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
     private final AuditLogService auditLogService;
+
+    public RestaurantServiceImpl(GuestRepository guestRepository, FoodItemRepository foodItemRepository, RestaurantOrderRepository orderRepository, OrderItemRepository orderItemRepository, AuditLogService auditLogService) {
+        this.guestRepository = guestRepository;
+        this.foodItemRepository = foodItemRepository;
+        this.orderRepository = orderRepository;
+        this.orderItemRepository = orderItemRepository;
+        this.auditLogService = auditLogService;
+    }
 
     // Utility: check admin
     private boolean isAdmin(String email) {

@@ -24,7 +24,6 @@ import java.time.LocalDateTime;
 import java.util.Map;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 @Transactional
 public class PaymentServiceImpl implements PaymentService {
@@ -33,6 +32,13 @@ public class PaymentServiceImpl implements PaymentService {
     private final BookingRepository bookingRepository;
     private final InvoiceService invoiceService;
     private final AuditLogService auditLogService;
+
+    public PaymentServiceImpl(PaymentRepository paymentRepository, BookingRepository bookingRepository, InvoiceService invoiceService, AuditLogService auditLogService) {
+        this.paymentRepository = paymentRepository;
+        this.bookingRepository = bookingRepository;
+        this.invoiceService = invoiceService;
+        this.auditLogService = auditLogService;
+    }
 
     // ------------------ Authorization helpers ------------------
     private boolean isAdmin() {

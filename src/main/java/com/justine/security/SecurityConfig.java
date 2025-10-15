@@ -20,12 +20,17 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import java.util.List;
 
 @Configuration
-@RequiredArgsConstructor
 public class SecurityConfig {
 
     private final JwtEntry jwtEntry;
     private final JwtCookieFilter jwtCookieFilter;
     private final CustomUserDetailsService userDetailsService;
+
+    public SecurityConfig(JwtEntry jwtEntry, JwtCookieFilter jwtCookieFilter, CustomUserDetailsService userDetailsService) {
+        this.jwtEntry = jwtEntry;
+        this.jwtCookieFilter = jwtCookieFilter;
+        this.userDetailsService = userDetailsService;
+    }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {

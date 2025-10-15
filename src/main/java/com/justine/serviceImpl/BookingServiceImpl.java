@@ -26,7 +26,6 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class BookingServiceImpl implements BookingService {
 
@@ -39,6 +38,18 @@ public class BookingServiceImpl implements BookingService {
     private final CloudinaryService cloudinaryService;
     private final AuditLogService auditLogService;
     private final StaffRepository staffRepository;
+
+    public BookingServiceImpl(BookingRepository bookingRepository, RoomRepository roomRepository, GuestRepository guestRepository, ServiceRepository serviceRepository, InvoiceRepository invoiceRepository, PaymentRepository paymentRepository, CloudinaryService cloudinaryService, AuditLogService auditLogService, StaffRepository staffRepository) {
+        this.bookingRepository = bookingRepository;
+        this.roomRepository = roomRepository;
+        this.guestRepository = guestRepository;
+        this.serviceRepository = serviceRepository;
+        this.invoiceRepository = invoiceRepository;
+        this.paymentRepository = paymentRepository;
+        this.cloudinaryService = cloudinaryService;
+        this.auditLogService = auditLogService;
+        this.staffRepository = staffRepository;
+    }
 
     // ------------------ Auth Helpers ------------------
     private boolean isAdmin() {

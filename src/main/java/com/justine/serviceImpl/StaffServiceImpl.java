@@ -20,13 +20,19 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
 public class StaffServiceImpl implements StaffService {
 
     private final StaffRepository staffRepository;
     private final HotelRepository hotelRepository;
     private final PasswordEncoder passwordEncoder;
     private final AuditLogService auditLogService;
+
+    public StaffServiceImpl(StaffRepository staffRepository, HotelRepository hotelRepository, PasswordEncoder passwordEncoder, AuditLogService auditLogService) {
+        this.staffRepository = staffRepository;
+        this.hotelRepository = hotelRepository;
+        this.passwordEncoder = passwordEncoder;
+        this.auditLogService = auditLogService;
+    }
 
     // 🔒 Utility: check admin role
     private boolean isAdmin(String email) {

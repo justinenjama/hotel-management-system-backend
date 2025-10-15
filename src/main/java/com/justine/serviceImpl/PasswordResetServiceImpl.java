@@ -25,7 +25,6 @@ import java.util.*;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class PasswordResetServiceImpl implements PasswordResetService {
 
     private final GuestRepository guestRepository;
@@ -39,6 +38,16 @@ public class PasswordResetServiceImpl implements PasswordResetService {
     private static final int EXPIRATION_MINUTES = 15;
     private static final int RATE_LIMIT_SECONDS = 60; // 1 request per minute
     private final Map<String, LocalDateTime> lastRequestTime = new HashMap<>();
+
+    public PasswordResetServiceImpl(GuestRepository guestRepository, StaffRepository staffRepository, EmailService emailService, PasswordResetTokenRepository tokenRepository, PasswordEncoder passwordEncoder, AuditLogService auditLogService, HttpServletRequest httpServletRequest) {
+        this.guestRepository = guestRepository;
+        this.staffRepository = staffRepository;
+        this.emailService = emailService;
+        this.tokenRepository = tokenRepository;
+        this.passwordEncoder = passwordEncoder;
+        this.auditLogService = auditLogService;
+        this.httpServletRequest = httpServletRequest;
+    }
 
     private enum AuditAction {
         REQUEST, RESET, FAILED
