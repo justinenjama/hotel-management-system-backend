@@ -7,19 +7,21 @@ import com.justine.model.*;
 import com.justine.repository.*;
 import com.justine.service.AuditLogService;
 import com.justine.service.RestaurantService;
+import com.justine.utils.CloudinaryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDateTime;
 import java.util.*;
-
 import java.util.stream.Collectors;
 
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class RestaurantServiceImpl implements RestaurantService {
 
     private final GuestRepository guestRepository;
@@ -27,106 +29,99 @@ public class RestaurantServiceImpl implements RestaurantService {
     private final RestaurantOrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
     private final AuditLogService auditLogService;
+    private final StaffRepository staffRepository;
+    private final HotelRepository hotelRepository;
+    private final CloudinaryService cloudinaryService;
 
-    public RestaurantServiceImpl(GuestRepository guestRepository, FoodItemRepository foodItemRepository, RestaurantOrderRepository orderRepository, OrderItemRepository orderItemRepository, AuditLogService auditLogService) {
-        this.guestRepository = guestRepository;
-        this.foodItemRepository = foodItemRepository;
-        this.orderRepository = orderRepository;
-        this.orderItemRepository = orderItemRepository;
-        this.auditLogService = auditLogService;
-    }
-
-    // Utility: check admin
-    private boolean isAdmin(String email) {
-        Optional<Guest> user = guestRepository.findByEmail(email);
-        return user.isPresent() && "ADMIN".equalsIgnoreCase(user.get().getRole());
-    }
-
-    // Utility: get current actorId
-    private Long getActorId(String email) {
-        return guestRepository.findByEmail(email).map(Guest::getId).orElse(null);
+    // Utility: check admin by user ID
+    private boolean isAdmin(Long currentUserId) {
+        return staffRepository.findById(currentUserId)
+                .map(staff -> "ADMIN".equalsIgnoreCase(String.valueOf(staff.getRole())))
+                .orElse(false);
     }
 
     // ============ FOOD ITEMS ============
     @Override
-    public ResponseEntity<FoodItemResponseDTO> addFoodItem(FoodItemRequestDTO dto, String currentUserEmail) {
-        Long actorId = getActorId(currentUserEmail);
+    public ResponseEntity<FoodItemResponseDTO> addFoodItem(FoodItemRequestDTO dto, MultipartFile imageFile, Long currentUserId) {
         try {
-            if (!isAdmin(currentUserEmail)) {
-                auditLogService.logRestaurant(actorId, "ADD_FOOD_ITEM_FORBIDDEN", null, Map.of(
-                        "email", currentUserEmail,
-                        "itemName", dto.getItemName()
-                ));
+            if (!isAdmin(currentUserId)) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+            }
+
+            Hotel hotel = hotelRepository.findById(dto.getHotelId())
+                    .orElseThrow(() -> new RuntimeException("Hotel not found"));
+
+            String imageUrl = null;
+            if (imageFile != null && !imageFile.isEmpty()) {
+                Map<String, String> uploadResult = cloudinaryService.uploadFileWithEagerSizes(imageFile, "food_items");
+                imageUrl = uploadResult.get("large"); // store the large version
             }
 
             FoodItem item = FoodItem.builder()
                     .itemName(dto.getItemName())
                     .price(dto.getPrice())
                     .category(dto.getCategory())
+                    .hotel(hotel)
+                    .imageUrl(imageUrl)
                     .build();
-
             foodItemRepository.save(item);
-
-            auditLogService.logRestaurant(actorId, "ADD_FOOD_ITEM_SUCCESS", item.getId(), Map.of(
-                    "itemName", dto.getItemName(),
-                    "price", dto.getPrice(),
-                    "category", dto.getCategory()
-            ));
 
             return ResponseEntity.status(HttpStatus.CREATED).body(toFoodItemResponse(item));
         } catch (Exception e) {
-            auditLogService.logRestaurant(actorId, "ADD_FOOD_ITEM_ERROR", null, Map.of(
-                    "error", e.getMessage()
-            ));
-            log.error("Error adding food item: {}", e.getMessage());
+            log.error("Error adding food item: {}", e.getMessage(), e);
             return ResponseEntity.internalServerError().build();
         }
     }
 
     @Override
-    public ResponseEntity<FoodItemResponseDTO> updateFoodItem(Long id, FoodItemRequestDTO dto, String currentUserEmail) {
-        Long actorId = getActorId(currentUserEmail);
+    public ResponseEntity<FoodItemResponseDTO> updateFoodItem(Long id, FoodItemRequestDTO dto, MultipartFile imageFile, Long currentUserId) {
         try {
-            if (!isAdmin(currentUserEmail)) {
-                auditLogService.logRestaurant(actorId, "UPDATE_FOOD_ITEM_FORBIDDEN", id, Map.of("email", currentUserEmail));
+            if (!isAdmin(currentUserId)) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
             }
 
-            FoodItem item = foodItemRepository.findById(id).orElseThrow();
+            FoodItem item = foodItemRepository.findById(id).orElseThrow(() -> new RuntimeException("Food item not found"));
+            Hotel hotel = hotelRepository.findById(dto.getHotelId()).orElseThrow();
+
+            // Delete old image if new image is provided
+            if (imageFile != null && !imageFile.isEmpty() && item.getImageUrl() != null) {
+                String publicId = cloudinaryService.extractPublicIdFromUrl(item.getImageUrl());
+                cloudinaryService.deleteFile(publicId);
+            }
+
+            String imageUrl = item.getImageUrl();
+            if (imageFile != null && !imageFile.isEmpty()) {
+                Map<String, String> uploadResult = cloudinaryService.uploadFileWithEagerSizes(imageFile, "food_items");
+                imageUrl = uploadResult.get("large");
+            }
+
             item.setItemName(dto.getItemName());
             item.setPrice(dto.getPrice());
             item.setCategory(dto.getCategory());
+            item.setHotel(hotel);
+            item.setImageUrl(imageUrl);
+
             foodItemRepository.save(item);
-
-            auditLogService.logRestaurant(actorId, "UPDATE_FOOD_ITEM_SUCCESS", id, Map.of(
-                    "itemName", dto.getItemName(),
-                    "price", dto.getPrice(),
-                    "category", dto.getCategory()
-            ));
-
             return ResponseEntity.ok(toFoodItemResponse(item));
         } catch (Exception e) {
-            auditLogService.logRestaurant(actorId, "UPDATE_FOOD_ITEM_ERROR", id, Map.of("error", e.getMessage()));
-            log.error("Error updating food item {}: {}", id, e.getMessage());
+            log.error("Error updating food item {}: {}", id, e.getMessage(), e);
             return ResponseEntity.internalServerError().build();
         }
     }
 
     @Override
-    public ResponseEntity<Void> deleteFoodItem(Long id, String currentUserEmail) {
-        Long actorId = getActorId(currentUserEmail);
+    public ResponseEntity<Void> deleteFoodItem(Long id, Long currentUserId) {
         try {
-            if (!isAdmin(currentUserEmail)) {
-                auditLogService.logRestaurant(actorId, "DELETE_FOOD_ITEM_FORBIDDEN", id, Map.of("email", currentUserEmail));
+            if (!isAdmin(currentUserId)) {
+                auditLogService.logRestaurant(currentUserId, "DELETE_FOOD_ITEM_FORBIDDEN", id, Map.of());
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
             }
 
             foodItemRepository.deleteById(id);
-            auditLogService.logRestaurant(actorId, "DELETE_FOOD_ITEM_SUCCESS", id, Map.of("deletedBy", currentUserEmail));
+            auditLogService.logRestaurant(currentUserId, "DELETE_FOOD_ITEM_SUCCESS", id, Map.of());
             return ResponseEntity.noContent().build();
         } catch (Exception e) {
-            auditLogService.logRestaurant(actorId, "DELETE_FOOD_ITEM_ERROR", id, Map.of("error", e.getMessage()));
+            auditLogService.logRestaurant(currentUserId, "DELETE_FOOD_ITEM_ERROR", id, Map.of("error", e.getMessage()));
             log.error("Error deleting food item {}: {}", id, e.getMessage());
             return ResponseEntity.internalServerError().build();
         }
@@ -134,32 +129,53 @@ public class RestaurantServiceImpl implements RestaurantService {
 
     @Override
     public ResponseEntity<List<FoodItemResponseDTO>> getAllFoodItems() {
-        List<FoodItemResponseDTO> items = foodItemRepository.findAll()
-                .stream().map(this::toFoodItemResponse)
+        List<FoodItemResponseDTO> items = foodItemRepository.findAll().stream()
+                .map(this::toFoodItemResponse)
                 .collect(Collectors.toList());
         return ResponseEntity.ok(items);
     }
 
+    @Override
+    public ResponseEntity<List<FoodItemResponseDTO>> getFoodItemsByHotel(Long hotelId) {
+        try {
+            List<FoodItemResponseDTO> items = foodItemRepository.findByHotelId(hotelId).stream()
+                    .map(this::toFoodItemResponse)
+                    .collect(Collectors.toList());
+            return ResponseEntity.ok(items);
+        } catch (Exception e) {
+            log.error("Error fetching food items for hotel {}: {}", hotelId, e.getMessage());
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
     // ============ ORDERS ============
     @Override
-    public ResponseEntity<RestaurantOrderResponseDTO> createOrder(RestaurantOrderDTO dto, String currentUserEmail) {
-        Long actorId = getActorId(currentUserEmail);
+    public ResponseEntity<RestaurantOrderResponseDTO> createOrder(RestaurantOrderDTO dto, Long currentUserId) {
         try {
-            Guest guest = guestRepository.findByEmail(currentUserEmail).orElseThrow();
+            Guest guest = guestRepository.findById(currentUserId).orElseThrow();
+            Hotel hotel = hotelRepository.findById(dto.getHotelId())
+                    .orElseThrow(() -> new RuntimeException("Hotel not found"));
 
             RestaurantOrder order = RestaurantOrder.builder()
                     .orderDate(LocalDateTime.now())
                     .status(OrderStatus.PENDING)
                     .guest(guest)
+                    .hotel(hotel)
                     .totalAmount(dto.getTotalAmount())
                     .build();
-
             orderRepository.save(order);
 
             List<OrderItem> items = dto.getOrderItems().stream().map(i -> {
+                FoodItem foodItem = foodItemRepository.findById(i.getFoodItemId())
+                        .orElseThrow(() -> new RuntimeException("Food item not found"));
+
+                if (!foodItem.getHotel().getId().equals(hotel.getId())) {
+                    throw new RuntimeException("Food item does not belong to selected hotel");
+                }
+
                 OrderItem orderItem = OrderItem.builder()
                         .order(order)
-                        .foodItem(i.getFoodItem())
+                        .foodItem(foodItem)
                         .quantity(i.getQuantity())
                         .build();
                 return orderItemRepository.save(orderItem);
@@ -168,47 +184,42 @@ public class RestaurantServiceImpl implements RestaurantService {
             order.setOrderItems(items);
             orderRepository.save(order);
 
-            auditLogService.logRestaurant(actorId, "CREATE_ORDER_SUCCESS", order.getId(), Map.of(
-                    "guestEmail", currentUserEmail,
+            auditLogService.logRestaurant(currentUserId, "CREATE_ORDER_SUCCESS", order.getId(), Map.of(
                     "totalAmount", dto.getTotalAmount(),
-                    "itemCount", items.size()
+                    "itemCount", items.size(),
+                    "hotelId", hotel.getId()
             ));
-
             return ResponseEntity.status(HttpStatus.CREATED).body(toOrderResponse(order));
         } catch (Exception e) {
-            auditLogService.logRestaurant(actorId, "CREATE_ORDER_ERROR", null, Map.of("error", e.getMessage()));
-            log.error("Error creating restaurant order: {}", e.getMessage());
+            auditLogService.logRestaurant(currentUserId, "CREATE_ORDER_ERROR", null, Map.of("error", e.getMessage()));
+            log.error("Error creating order: {}", e.getMessage());
             return ResponseEntity.internalServerError().build();
         }
     }
 
     @Override
-    public ResponseEntity<RestaurantOrderResponseDTO> getOrderById(Long orderId, String currentUserEmail) {
-        Long actorId = getActorId(currentUserEmail);
+    public ResponseEntity<RestaurantOrderResponseDTO> getOrderById(Long orderId, Long currentUserId) {
         try {
             RestaurantOrder order = orderRepository.findById(orderId).orElseThrow();
-
-            if (!isAdmin(currentUserEmail) && !order.getGuest().getEmail().equals(currentUserEmail)) {
-                auditLogService.logRestaurant(actorId, "GET_ORDER_FORBIDDEN", orderId, Map.of("email", currentUserEmail));
+            if (!isAdmin(currentUserId) && !order.getGuest().getId().equals(currentUserId)) {
+                auditLogService.logRestaurant(currentUserId, "GET_ORDER_FORBIDDEN", orderId, Map.of());
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
             }
 
-            auditLogService.logRestaurant(actorId, "GET_ORDER_SUCCESS", orderId, Map.of("guestEmail", currentUserEmail));
+            auditLogService.logRestaurant(currentUserId, "GET_ORDER_SUCCESS", orderId, Map.of());
             return ResponseEntity.ok(toOrderResponse(order));
         } catch (Exception e) {
-            auditLogService.logRestaurant(actorId, "GET_ORDER_ERROR", orderId, Map.of("error", e.getMessage()));
+            auditLogService.logRestaurant(currentUserId, "GET_ORDER_ERROR", orderId, Map.of("error", e.getMessage()));
             log.error("Error retrieving order {}: {}", orderId, e.getMessage());
             return ResponseEntity.internalServerError().build();
         }
     }
 
     @Override
-    public ResponseEntity<List<RestaurantOrderResponseDTO>> getOrdersByGuest(Long guestId, String currentUserEmail) {
-        Long actorId = getActorId(currentUserEmail);
+    public ResponseEntity<List<RestaurantOrderResponseDTO>> getOrdersByGuest(Long guestId, Long currentUserId) {
         try {
-            Guest guest = guestRepository.findById(guestId).orElseThrow();
-            if (!isAdmin(currentUserEmail) && !guest.getEmail().equals(currentUserEmail)) {
-                auditLogService.logRestaurant(actorId, "GET_GUEST_ORDERS_FORBIDDEN", guestId, Map.of("email", currentUserEmail));
+            if (!isAdmin(currentUserId) && !guestId.equals(currentUserId)) {
+                auditLogService.logRestaurant(currentUserId, "GET_GUEST_ORDERS_FORBIDDEN", guestId, Map.of());
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
             }
 
@@ -216,18 +227,74 @@ public class RestaurantServiceImpl implements RestaurantService {
                     .stream().map(this::toOrderResponse)
                     .collect(Collectors.toList());
 
-            auditLogService.logRestaurant(actorId, "GET_GUEST_ORDERS_SUCCESS", guestId, Map.of(
+            auditLogService.logRestaurant(currentUserId, "GET_GUEST_ORDERS_SUCCESS", guestId, Map.of(
                     "orderCount", orders.size()
             ));
-
             return ResponseEntity.ok(orders);
         } catch (Exception e) {
-            auditLogService.logRestaurant(actorId, "GET_GUEST_ORDERS_ERROR", guestId, Map.of("error", e.getMessage()));
+            auditLogService.logRestaurant(currentUserId, "GET_GUEST_ORDERS_ERROR", guestId, Map.of("error", e.getMessage()));
             log.error("Error retrieving guest orders {}: {}", guestId, e.getMessage());
             return ResponseEntity.internalServerError().build();
         }
     }
 
+    @Override
+    public ResponseEntity<RestaurantOrderResponseDTO> cancelOrder(Long orderId, Long currentUserId) {
+        try {
+            RestaurantOrder order = orderRepository.findById(orderId)
+                    .orElseThrow(() -> new RuntimeException("Order not found"));
+
+            // Permission: Only admin or the guest who owns it
+            if (!isAdmin(currentUserId) && !order.getGuest().getId().equals(currentUserId)) {
+                auditLogService.logRestaurant(currentUserId, "CANCEL_ORDER_FORBIDDEN", orderId, Map.of());
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+            }
+
+            // Cannot cancel delivered orders
+            if (order.getStatus() == OrderStatus.DELIVERED) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
+            }
+
+            // Update status
+            order.setStatus(OrderStatus.CANCELLED);
+            orderRepository.save(order);
+
+            auditLogService.logRestaurant(currentUserId, "CANCEL_ORDER_SUCCESS", orderId, Map.of());
+            return ResponseEntity.ok(toOrderResponse(order));
+
+        } catch (Exception e) {
+            auditLogService.logRestaurant(currentUserId, "CANCEL_ORDER_ERROR", orderId, Map.of("error", e.getMessage()));
+            log.error("Error cancelling order {}: {}", orderId, e.getMessage());
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    @Override
+    public ResponseEntity<List<RestaurantOrderResponseDTO>> getAllOrders(Long currentUserId) {
+        try {
+            if (!isAdmin(currentUserId)) {
+                auditLogService.logRestaurant(currentUserId, "GET_ALL_ORDERS_FORBIDDEN", null, Map.of());
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+            }
+
+            List<RestaurantOrderResponseDTO> orders = orderRepository.findAll()
+                    .stream()
+                    .map(this::toOrderResponse)
+                    .collect(Collectors.toList());
+
+            if (orders.isEmpty()){
+                return new ResponseEntity<>(new ArrayList<>(), HttpStatus.OK);
+            }
+
+            auditLogService.logRestaurant(currentUserId, "GET_ALL_ORDERS_SUCCESS", null, Map.of("orderCount", orders.size()));
+            return ResponseEntity.ok(orders);
+
+        } catch (Exception e) {
+            auditLogService.logRestaurant(currentUserId, "GET_ALL_ORDERS_ERROR", null, Map.of("error", e.getMessage()));
+            log.error("Error retrieving all orders: {}", e.getMessage());
+            return ResponseEntity.internalServerError().build();
+        }
+    }
     // ============ MAPPERS ============
     private FoodItemResponseDTO toFoodItemResponse(FoodItem item) {
         return FoodItemResponseDTO.builder()
@@ -235,6 +302,8 @@ public class RestaurantServiceImpl implements RestaurantService {
                 .itemName(item.getItemName())
                 .price(item.getPrice())
                 .category(item.getCategory())
+                .imageUrl(item.getImageUrl())
+                .hotelId(item.getHotel() != null ? item.getHotel().getId() : null)
                 .build();
     }
 
@@ -253,6 +322,7 @@ public class RestaurantServiceImpl implements RestaurantService {
                 .status(order.getStatus())
                 .totalAmount(order.getTotalAmount())
                 .guest(toGuestResponse(order.getGuest()))
+                .hotelId(order.getHotel() != null ? order.getHotel().getId() : null)
                 .orderItems(order.getOrderItems().stream()
                         .map(this::toOrderItemResponse)
                         .collect(Collectors.toList()))

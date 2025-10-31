@@ -8,13 +8,10 @@ import java.util.List;
 
 public interface ServiceService {
 
-    // --- SERVICES CRUD ---
-    ResponseEntity<ServiceResponseDTO> addService(ServiceRequestDTO dto, String currentUserEmail);
-    ResponseEntity<ServiceResponseDTO> updateService(Long serviceId, ServiceRequestDTO dto, String currentUserEmail);
-    ResponseEntity<Void> deleteService(Long serviceId, String currentUserEmail);
+    ResponseEntity<ServiceResponseDTO> addService(ServiceRequestDTO dto, Long currentUserId);
+    ResponseEntity<ServiceResponseDTO> updateService(Long serviceId, ServiceRequestDTO dto, Long currentUserId);
+    ResponseEntity<Void> deleteService(Long serviceId, Long currentUserId);
     ResponseEntity<List<ServiceResponseDTO>> getAllServices();
-
-    // --- LINKING SERVICES TO BOOKINGS ---
-    ResponseEntity<Void> addServiceToBooking(Long bookingId, Long serviceId, String currentUserEmail);
-    ResponseEntity<Void> removeServiceFromBooking(Long bookingId, Long serviceId, String currentUserEmail);
+    ResponseEntity<Void> addServiceToBooking(Long bookingId, Long serviceId, Long currentUserId);
+    ResponseEntity<Void> removeServiceFromBooking(Long bookingId, Long serviceId, Long currentUserId);
 }

@@ -1,5 +1,6 @@
 package com.justine.enums;
 
 public enum OrderStatus {
-    PENDING, PREPARING, SERVED, CANCELLED
+    PENDING, PREPARING, READY, DELIVERED, CANCELLED, SERVED, ON_THE_WAY
+
 }

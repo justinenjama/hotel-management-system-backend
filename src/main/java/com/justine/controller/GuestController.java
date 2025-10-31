@@ -3,7 +3,6 @@ package com.justine.controller;
 import com.justine.dtos.request.GuestDTO;
 import com.justine.dtos.response.GuestResponseDTO;
 import com.justine.service.GuestService;
-import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -20,6 +19,10 @@ public class GuestController {
         this.guestService = guestService;
     }
 
+    private Long getCurrentUserId(Principal principal) {
+        return Long.parseLong(principal.getName());
+    }
+
     @PostMapping
     public ResponseEntity<GuestResponseDTO> createGuest(@RequestBody GuestDTO dto) {
         return guestService.createGuest(dto);
@@ -29,31 +32,31 @@ public class GuestController {
     public ResponseEntity<GuestResponseDTO> updateGuest(@PathVariable Long id,
                                                         @RequestBody GuestDTO dto,
                                                         Principal principal) {
-        return guestService.updateGuest(id, dto, principal.getName());
+        return guestService.updateGuest(id, dto, getCurrentUserId(principal));
     }
 
     @GetMapping("/{id}")
     public ResponseEntity<GuestResponseDTO> getGuest(@PathVariable Long id, Principal principal) {
-        return guestService.getGuestById(id, principal.getName());
+        return guestService.getGuestById(id, getCurrentUserId(principal));
     }
 
     @GetMapping
     public ResponseEntity<List<GuestResponseDTO>> getAllGuests(Principal principal) {
-        return guestService.getAllGuests(principal.getName());
+        return guestService.getAllGuests(getCurrentUserId(principal));
     }
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteGuest(@PathVariable Long id, Principal principal) {
-        return guestService.deleteGuest(id, principal.getName());
+        return guestService.deleteGuest(id, getCurrentUserId(principal));
     }
 
     @GetMapping("/{id}/bookings")
     public ResponseEntity<List<GuestResponseDTO>> getGuestBookings(@PathVariable Long id, Principal principal) {
-        return guestService.getGuestBookings(id, principal.getName());
+        return guestService.getGuestBookings(id, getCurrentUserId(principal));
     }
 
     @GetMapping("/{id}/orders")
     public ResponseEntity<List<GuestResponseDTO>> getGuestOrders(@PathVariable Long id, Principal principal) {
-        return guestService.getGuestOrders(id, principal.getName());
+        return guestService.getGuestOrders(id, getCurrentUserId(principal));
     }
 }

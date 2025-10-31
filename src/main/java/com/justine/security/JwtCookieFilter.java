@@ -5,18 +5,21 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.Optional;
+import java.util.*;
+import java.util.stream.Collectors;
 
+@Slf4j
 @Component
 public class JwtCookieFilter extends OncePerRequestFilter {
 
@@ -35,28 +38,56 @@ public class JwtCookieFilter extends OncePerRequestFilter {
             @NonNull FilterChain filterChain
     ) throws ServletException, IOException {
 
-        // 1. Read token from cookies
-        String token = null;
-        if (request.getCookies() != null) {
-            Optional<Cookie> cookieOpt = Arrays.stream(request.getCookies())
-                    .filter(c -> JwtUtils.getAccessCookieName().equals(c.getName()))
-                    .findFirst();
-            if (cookieOpt.isPresent()) token = cookieOpt.get().getValue();
+        String token = extractAccessToken(request);
+        if (token == null || token.isBlank()) {
+            filterChain.doFilter(request, response);
+            return;
         }
 
-        // 2. Validate token
-        if (token != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-            if (jwtUtils.isTokenValid(token)) {
+        try {
+            if (jwtUtils.isTokenValid(token) && SecurityContextHolder.getContext().getAuthentication() == null) {
                 String userId = jwtUtils.extractSubject(token);
-                boolean isStaff = jwtUtils.extractRoles(token).stream().anyMatch(r -> r.startsWith("MANAGER") || r.startsWith("STAFF"));
+                List<String> roles = jwtUtils.extractRoles(token);
+
+                boolean isStaff = roles.stream().anyMatch(r ->
+                        r.equalsIgnoreCase("ADMIN") ||
+                                r.equalsIgnoreCase("MANAGER") ||
+                                r.equalsIgnoreCase("STAFF")
+                );
+
                 UserDetails userDetails = userDetailsService.loadUserById(Long.parseLong(userId), isStaff);
 
-                UsernamePasswordAuthenticationToken authToken =
-                        new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
-                SecurityContextHolder.getContext().setAuthentication(authToken);
+                List<SimpleGrantedAuthority> authorities = roles.stream()
+                        .map(r -> r.startsWith("ROLE_") ? r : "ROLE_" + r)
+                        .map(SimpleGrantedAuthority::new)
+                        .collect(Collectors.toList());
+
+                UsernamePasswordAuthenticationToken auth =
+                        new UsernamePasswordAuthenticationToken(userDetails, null, authorities);
+                auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+
+                SecurityContextHolder.getContext().setAuthentication(auth);
+                log.debug("[JWT_COOKIE_FILTER] Authenticated userId={} roles={}", userId, roles);
             }
+        } catch (Exception e) {
+            log.warn("[JWT_COOKIE_FILTER] Token invalid: {}", e.getMessage());
+            clearInvalidCookies(response);
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private String extractAccessToken(HttpServletRequest request) {
+        if (request.getCookies() == null) return null;
+        return Arrays.stream(request.getCookies())
+                .filter(c -> JwtUtils.getAccessCookieName().equals(c.getName()))
+                .map(Cookie::getValue)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private void clearInvalidCookies(HttpServletResponse response) {
+        response.addHeader("Set-Cookie", new Cookie(JwtUtils.getAccessCookieName(), "").toString());
+        response.addHeader("Set-Cookie", new Cookie(JwtUtils.getRefreshCookieName(), "").toString());
     }
 }

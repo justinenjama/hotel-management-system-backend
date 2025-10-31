@@ -4,12 +4,14 @@ import com.justine.enums.FoodCategory;
 import lombok.*;
 
 @Data
-@Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@Builder
 public class FoodItemResponseDTO {
     private Long id;
     private String itemName;
     private Double price;
     private FoodCategory category;
+    private String imageUrl;
+    private Long hotelId;
 }

@@ -9,15 +9,15 @@ import java.util.List;
 public interface GuestService {
     ResponseEntity<GuestResponseDTO> createGuest(GuestDTO dto);
 
-    ResponseEntity<GuestResponseDTO> updateGuest(Long guestId, GuestDTO dto, String currentUserEmail);
+    ResponseEntity<GuestResponseDTO> updateGuest(Long guestId, GuestDTO dto, Long currentUserId);
 
-    ResponseEntity<GuestResponseDTO> getGuestById(Long id, String currentUserEmail);
+    ResponseEntity<GuestResponseDTO> getGuestById(Long id, Long currentUserId);
 
-    ResponseEntity<List<GuestResponseDTO>> getAllGuests(String currentUserEmail);
+    ResponseEntity<List<GuestResponseDTO>> getAllGuests(Long currentUserId);
 
-    ResponseEntity<Void> deleteGuest(Long id, String currentUserEmail);
+    ResponseEntity<Void> deleteGuest(Long id, Long currentUserId);
 
-    ResponseEntity<List<GuestResponseDTO>> getGuestBookings(Long guestId, String currentUserEmail);
+    ResponseEntity<List<GuestResponseDTO>> getGuestBookings(Long guestId, Long currentUserId);
 
-    ResponseEntity<List<GuestResponseDTO>> getGuestOrders(Long guestId, String currentUserEmail);
+    ResponseEntity<List<GuestResponseDTO>> getGuestOrders(Long guestId, Long currentUserId);
 }

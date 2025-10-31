@@ -4,6 +4,7 @@ import com.justine.dtos.request.GuestDTO;
 import com.justine.dtos.request.LoginRequestDTO;
 import com.justine.enums.StaffRole;
 import com.justine.service.AuthService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -56,19 +57,8 @@ public class AuthController {
     }
 
     @GetMapping("/me")
-    public ResponseEntity<?> getCurrentUser(Authentication authentication) {
-        if (authentication == null || !authentication.isAuthenticated()) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(Map.of("error", "Unauthenticated"));
-        }
-
-        String userId = authentication.getName();
-        boolean isStaff = authentication.getAuthorities().stream()
-                .anyMatch(a -> a.getAuthority().contains("STAFF")
-                        || a.getAuthority().contains("MANAGER")
-                        || a.getAuthority().contains("ADMIN"));
-
-        return authService.getCurrentUserById(userId, isStaff);
+    public ResponseEntity<?> getCurrentUser(HttpServletRequest request) {
+        return authService.getCurrentUser(request);
     }
 
     @PutMapping("/update/{id}")

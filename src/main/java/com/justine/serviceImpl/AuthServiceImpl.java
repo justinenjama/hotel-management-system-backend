@@ -1,8 +1,5 @@
 package com.justine.serviceImpl;
 
-import java.util.Map;
-import java.util.Optional;
-
 import com.justine.dtos.request.GuestDTO;
 import com.justine.dtos.request.LoginRequestDTO;
 import com.justine.dtos.response.GuestResponseDTO;
@@ -16,18 +13,27 @@ import com.justine.repository.StaffRepository;
 import com.justine.security.JwtUtils;
 import com.justine.service.AuditLogService;
 import com.justine.service.AuthService;
+import com.justine.service.EmailService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 @Service
 @Slf4j
+@Transactional
 public class AuthServiceImpl implements AuthService {
 
     private final GuestRepository guestRepository;
@@ -35,32 +41,38 @@ public class AuthServiceImpl implements AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtUtils jwtUtils;
     private final AuditLogService auditLogService;
+    private final EmailService emailService;
 
-    public AuthServiceImpl(GuestRepository guestRepository, StaffRepository staffRepository, PasswordEncoder passwordEncoder, JwtUtils jwtUtils, AuditLogService auditLogService) {
+    public AuthServiceImpl(
+            GuestRepository guestRepository,
+            StaffRepository staffRepository,
+            PasswordEncoder passwordEncoder,
+            JwtUtils jwtUtils,
+            AuditLogService auditLogService,
+            EmailService emailService
+    ) {
         this.guestRepository = guestRepository;
         this.staffRepository = staffRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtUtils = jwtUtils;
         this.auditLogService = auditLogService;
+        this.emailService = emailService;
     }
 
-    // ------------------ Register Guest ------------------
+    // ---------------- REGISTER GUEST ---------------- //
     @Override
     public ResponseEntity<?> registerGuest(GuestDTO guestDTO) {
         try {
-            if (guestRepository.existsByEmail(guestDTO.getEmail())) {
-                return ResponseEntity.status(HttpStatus.CONFLICT).body("Email is already in use");
-            }
+            if (guestRepository.existsByEmail(guestDTO.getEmail()))
+                return ResponseEntity.status(HttpStatus.CONFLICT).body("Email already in use");
 
-            if (guestRepository.existsByPhoneNumber(guestDTO.getPhoneNumber())) {
-                return ResponseEntity.status(HttpStatus.CONFLICT).body("Phone Number is already in use");
-            }
+            if (guestRepository.existsByPhoneNumber(guestDTO.getPhoneNumber()))
+                return ResponseEntity.status(HttpStatus.CONFLICT).body("Phone number already in use");
 
-            if (!guestDTO.getPassword().equals(guestDTO.getConfirmPassword())) {
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Passwords do not match");
-            }
+            if (!guestDTO.getPassword().equals(guestDTO.getConfirmPassword()))
+                return ResponseEntity.badRequest().body("Passwords do not match");
 
-            Guest newGuest = Guest.builder()
+            Guest guest = Guest.builder()
                     .fullName(guestDTO.getFullName())
                     .email(guestDTO.getEmail())
                     .phoneNumber(guestDTO.getPhoneNumber())
@@ -70,70 +82,73 @@ public class AuthServiceImpl implements AuthService {
                     .role("GUEST")
                     .build();
 
-            guestRepository.save(newGuest);
+            guestRepository.saveAndFlush(guest);
 
             auditLogService.logAuthService(null, "REGISTER_GUEST_SUCCESS", Map.of(
-                    "email", newGuest.getEmail(),
-                    "name", newGuest.getFullName()
+                    "email", guest.getEmail(), "name", guest.getFullName()
             ));
 
-            log.info("Guest registered successfully: {}", newGuest.getEmail());
-            return ResponseEntity.status(HttpStatus.CREATED).body("Guest registered successfully");
+            emailService.sendEmail(
+                    guest.getEmail(),
+                    "Welcome to Justine Hotels",
+                    String.format("<p>Hi %s,</p><p>Welcome to Justine Hotels!</p>", guest.getFullName())
+            );
 
+            return ResponseEntity.status(HttpStatus.CREATED).body("Guest registered successfully");
         } catch (Exception e) {
-            log.error("Error registering guest: {}", e.getMessage());
+            log.error("Register guest error: {}", e.getMessage());
             auditLogService.logAuthService(null, "REGISTER_GUEST_ERROR", Map.of("error", e.getMessage()));
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Guest registration failed");
+            return ResponseEntity.internalServerError().body("Registration failed");
         }
     }
 
-    // ------------------ Register Staff (Admin Only) ------------------
+    // ---------------- REGISTER STAFF ---------------- //
     @Override
-    public ResponseEntity<?> registerStaff(GuestDTO staffDTO, StaffRole role) {
+    public ResponseEntity<?> registerStaff(GuestDTO dto, StaffRole role) {
         try {
-            // Verify admin
             var auth = SecurityContextHolder.getContext().getAuthentication();
             boolean isAdmin = auth != null && auth.getAuthorities().stream()
                     .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
 
-            if (!isAdmin) {
+            if (!isAdmin)
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Only admins can register staff");
-            }
 
-            if (staffRepository.existsByEmail(staffDTO.getEmail())) {
-                return ResponseEntity.status(HttpStatus.CONFLICT).body("Email is already in use");
-            }
+            if (staffRepository.existsByEmail(dto.getEmail()))
+                return ResponseEntity.status(HttpStatus.CONFLICT).body("Email already used");
 
-            if (!staffDTO.getPassword().equals(staffDTO.getConfirmPassword())) {
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Passwords do not match");
-            }
+            if (!dto.getPassword().equals(dto.getConfirmPassword()))
+                return ResponseEntity.badRequest().body("Passwords do not match");
 
-            Staff newStaff = Staff.builder()
-                    .fullName(staffDTO.getFullName())
-                    .email(staffDTO.getEmail())
-                    .phoneNumber(staffDTO.getPhoneNumber())
-                    .gender(staffDTO.getGender())
-                    .password(passwordEncoder.encode(staffDTO.getPassword()))
+            Staff staff = Staff.builder()
+                    .fullName(dto.getFullName())
+                    .email(dto.getEmail())
+                    .phoneNumber(dto.getPhoneNumber())
+                    .gender(dto.getGender())
+                    .password(passwordEncoder.encode(dto.getPassword()))
                     .role(role)
                     .build();
 
-            staffRepository.save(newStaff);
+            staffRepository.saveAndFlush(staff);
 
             auditLogService.logAuthService(null, "REGISTER_STAFF_SUCCESS", Map.of(
-                    "email", newStaff.getEmail(),
-                    "role", newStaff.getRole().name()
+                    "email", staff.getEmail(), "role", staff.getRole().name()
             ));
 
-            log.info("Staff registered successfully: {}", newStaff.getEmail());
-            return ResponseEntity.status(HttpStatus.CREATED).body("Staff registered successfully");
+            emailService.sendEmail(
+                    staff.getEmail(),
+                    "Your Staff Account",
+                    String.format("<p>Hi %s,</p><p>Your account has been created with role <b>%s</b>.</p>", staff.getFullName(), staff.getRole())
+            );
 
+            return ResponseEntity.status(HttpStatus.CREATED).body("Staff registered successfully");
         } catch (Exception e) {
-            log.error("Error registering staff: {}", e.getMessage());
+            log.error("Register staff error: {}", e.getMessage());
             auditLogService.logAuthService(null, "REGISTER_STAFF_ERROR", Map.of("error", e.getMessage()));
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Staff registration failed");
+            return ResponseEntity.internalServerError().body("Staff registration failed");
         }
     }
 
+    // ---------------- UPDATE USER ---------------- //
     @Override
     public ResponseEntity<?> updateUser(Long id, Map<String, Object> updates, Authentication authentication) {
         try {
@@ -143,16 +158,14 @@ public class AuthServiceImpl implements AuthService {
             boolean isStaff = authentication.getAuthorities().stream()
                     .anyMatch(a -> a.getAuthority().contains("STAFF") || a.getAuthority().contains("MANAGER"));
 
-            // Check ownership or admin privileges
             if (!isAdmin && !authUserId.equals(String.valueOf(id))) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "You can only update your own profile"));
             }
 
             if (isStaff) {
                 Optional<Staff> staffOpt = staffRepository.findById(id);
-                if (staffOpt.isEmpty()) {
+                if (staffOpt.isEmpty())
                     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "Staff not found"));
-                }
 
                 Staff staff = staffOpt.get();
 
@@ -160,16 +173,13 @@ public class AuthServiceImpl implements AuthService {
                 if (updates.containsKey("phoneNumber")) staff.setPhoneNumber((String) updates.get("phoneNumber"));
                 if (updates.containsKey("gender")) staff.setGender((String) updates.get("gender"));
 
-                // Only admins can modify roles
                 if (updates.containsKey("role")) {
-                    if (!isAdmin) {
+                    if (!isAdmin)
                         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Only admins can update roles"));
-                    }
-                    String newRole = (String) updates.get("role");
                     try {
-                        staff.setRole(StaffRole.valueOf(newRole.toUpperCase()));
+                        staff.setRole(StaffRole.valueOf(((String) updates.get("role")).toUpperCase()));
                     } catch (IllegalArgumentException e) {
-                        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Invalid role"));
+                        return ResponseEntity.badRequest().body(Map.of("error", "Invalid role"));
                     }
                 }
 
@@ -179,20 +189,14 @@ public class AuthServiceImpl implements AuthService {
 
             } else {
                 Optional<Guest> guestOpt = guestRepository.findById(id);
-                if (guestOpt.isEmpty()) {
+                if (guestOpt.isEmpty())
                     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "Guest not found"));
-                }
 
                 Guest guest = guestOpt.get();
 
                 if (updates.containsKey("fullName")) guest.setFullName((String) updates.get("fullName"));
                 if (updates.containsKey("phoneNumber")) guest.setPhoneNumber((String) updates.get("phoneNumber"));
                 if (updates.containsKey("gender")) guest.setGender((String) updates.get("gender"));
-
-                // Guests cannot change their role
-                if (updates.containsKey("role")) {
-                    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Guests cannot change their role"));
-                }
 
                 guestRepository.save(guest);
                 auditLogService.logAuthService(guest.getId(), "UPDATE_PROFILE_SUCCESS", Map.of("id", id, "type", "GUEST"));
@@ -202,152 +206,135 @@ public class AuthServiceImpl implements AuthService {
         } catch (Exception e) {
             log.error("Error updating user: {}", e.getMessage());
             auditLogService.logAuthService(null, "UPDATE_PROFILE_ERROR", Map.of("error", e.getMessage()));
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", "Failed to update profile"));
+            return ResponseEntity.internalServerError().body(Map.of("error", "Failed to update profile"));
         }
     }
 
-
-    // ------------------ Login ------------------
+    // ---------------- LOGIN ---------------- //
     @Override
     public ResponseEntity<?> login(LoginRequestDTO loginRequest, HttpServletResponse response) {
         try {
-            // Staff Login
             Optional<Staff> staffOpt = staffRepository.findByEmail(loginRequest.getEmail());
             if (staffOpt.isPresent()) {
                 Staff staff = staffOpt.get();
-                if (!passwordEncoder.matches(loginRequest.getPassword(), staff.getPassword())) {
+                if (!passwordEncoder.matches(loginRequest.getPassword(), staff.getPassword()))
                     return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid credentials");
-                }
 
-                String accessToken = jwtUtils.generateToken(staff);
-                String refreshToken = jwtUtils.generateRefreshToken(staff);
+                String access = jwtUtils.generateToken(staff);
+                String refresh = jwtUtils.generateRefreshToken(staff);
 
-                response.addCookie(jwtUtils.generateAccessTokenCookie(accessToken));
-                response.addCookie(jwtUtils.generateRefreshTokenCookie(refreshToken));
+                response.addHeader(HttpHeaders.SET_COOKIE, jwtUtils.generateAccessTokenCookie(access).toString());
+                response.addHeader(HttpHeaders.SET_COOKIE, jwtUtils.generateRefreshTokenCookie(refresh).toString());
 
-                auditLogService.logAuthService(staff.getId(), "LOGIN_SUCCESS", Map.of(
-                        "email", staff.getEmail(),
-                        "role", staff.getRole().name()
-                ));
-
+                auditLogService.logAuthService(staff.getId(), "LOGIN_SUCCESS",
+                        Map.of("role", staff.getRole().name(), "email", staff.getEmail()));
                 return ResponseEntity.ok("Staff logged in successfully");
             }
 
-            // Guest Login
-            Optional<Guest> guestOpt = guestRepository.findByEmail(loginRequest.getEmail());
-            if (guestOpt.isEmpty()) {
+            Guest guest = guestRepository.findByEmail(loginRequest.getEmail())
+                    .orElseThrow(() -> new RuntimeException("Invalid credentials"));
+            if (!passwordEncoder.matches(loginRequest.getPassword(), guest.getPassword()))
                 return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid credentials");
-            }
 
-            Guest guest = guestOpt.get();
-            if (!passwordEncoder.matches(loginRequest.getPassword(), guest.getPassword())) {
-                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid credentials");
-            }
+            String access = jwtUtils.generateToken(guest);
+            String refresh = jwtUtils.generateRefreshToken(guest);
 
-            String accessToken = jwtUtils.generateToken(guest);
-            String refreshToken = jwtUtils.generateRefreshToken(guest);
+            response.addHeader(HttpHeaders.SET_COOKIE, jwtUtils.generateAccessTokenCookie(access).toString());
+            response.addHeader(HttpHeaders.SET_COOKIE, jwtUtils.generateRefreshTokenCookie(refresh).toString());
 
-            response.addCookie(jwtUtils.generateAccessTokenCookie(accessToken));
-            response.addCookie(jwtUtils.generateRefreshTokenCookie(refreshToken));
-
-            auditLogService.logAuthService(guest.getId(), "LOGIN_SUCCESS", Map.of(
-                    "email", guest.getEmail(),
-                    "role", guest.getRole()
-            ));
-
+            auditLogService.logAuthService(guest.getId(), "LOGIN_SUCCESS", Map.of("email", guest.getEmail()));
             return ResponseEntity.ok("Guest logged in successfully");
 
         } catch (Exception e) {
             log.error("Login error: {}", e.getMessage());
-            auditLogService.logAuthService(null, "LOGIN_ERROR", Map.of(
-                    "email", loginRequest.getEmail(),
-                    "error", e.getMessage()
-            ));
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Login failed");
+            auditLogService.logAuthService(null, "LOGIN_ERROR", Map.of("error", e.getMessage()));
+            return ResponseEntity.internalServerError().body("Login failed");
         }
     }
 
-    // ------------------ Logout ------------------
-    @Override
-    public ResponseEntity<?> logout(HttpServletResponse response) {
-        try {
-            response.addCookie(jwtUtils.clearAccessTokenCookie());
-            response.addCookie(jwtUtils.clearRefreshTokenCookie());
-
-            auditLogService.logAuthService(null, "LOGOUT_SUCCESS", Map.of("message", "User logged out"));
-            return ResponseEntity.ok("Logged out successfully");
-
-        } catch (Exception e) {
-            log.error("Logout error: {}", e.getMessage());
-            auditLogService.logAuthService(null, "LOGOUT_ERROR", Map.of("error", e.getMessage()));
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Logout failed");
-        }
-    }
-
-    // ------------------ Refresh Token ------------------
+    // ---------------- REFRESH TOKEN ---------------- //
     @Override
     public ResponseEntity<?> refreshToken(HttpServletResponse response, String refreshToken) {
         try {
-            if (!jwtUtils.isTokenValid(refreshToken)) {
+            if (!jwtUtils.isTokenValid(refreshToken))
                 return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid refresh token");
-            }
 
             String userId = jwtUtils.extractSubject(refreshToken);
             boolean isStaff = jwtUtils.extractRoles(refreshToken).stream()
-                    .anyMatch(r -> r.startsWith("MANAGER") || r.startsWith("STAFF"));
+                    .anyMatch(r -> r.contains("STAFF") || r.contains("MANAGER"));
 
-            String newAccessToken;
-            if (isStaff) {
-                Staff staff = staffRepository.findById(Long.parseLong(userId)).orElseThrow();
-                newAccessToken = jwtUtils.generateToken(staff);
-            } else {
-                Guest guest = guestRepository.findById(Long.parseLong(userId)).orElseThrow();
-                newAccessToken = jwtUtils.generateToken(guest);
-            }
+            String newAccessToken = isStaff
+                    ? jwtUtils.generateToken(staffRepository.findById(Long.parseLong(userId)).orElseThrow())
+                    : jwtUtils.generateToken(guestRepository.findById(Long.parseLong(userId)).orElseThrow());
 
-            response.addCookie(jwtUtils.generateAccessTokenCookie(newAccessToken));
-            auditLogService.logAuthService(Long.parseLong(userId), "REFRESH_TOKEN_SUCCESS", Map.of("userId", userId));
+            response.addHeader(HttpHeaders.SET_COOKIE, jwtUtils.generateAccessTokenCookie(newAccessToken).toString());
 
+            auditLogService.logAuthService(Long.parseLong(userId), "REFRESH_TOKEN_SUCCESS", Map.of("id", userId));
             return ResponseEntity.ok("Access token refreshed");
 
         } catch (Exception e) {
-            log.error("Error refreshing token: {}", e.getMessage());
+            log.error("Refresh token error: {}", e.getMessage());
             auditLogService.logAuthService(null, "REFRESH_TOKEN_ERROR", Map.of("error", e.getMessage()));
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Token refresh failed");
+            return ResponseEntity.internalServerError().body("Refresh failed");
         }
     }
 
     // ------------------ Get Current User ------------------
     @Override
-    public ResponseEntity<?> getCurrentUserById(String userId, boolean isStaff) {
+    public ResponseEntity<?> getCurrentUser(HttpServletRequest request) {
         try {
-            Long id = Long.parseLong(userId);
+            // 1️⃣ Extract JWT from request cookies or Authorization header
+            String token = jwtUtils.extractTokenFromRequest(request);
+            if (token == null) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                        .body(Map.of("error", "No token found"));
+            }
 
+            // 2️⃣ Extract user ID and roles from JWT
+            Long userId = Long.parseLong(jwtUtils.getSubject(token));
+            List<String> roles = jwtUtils.getRoles(token);
+
+            // 3️⃣ Determine if user is staff (roles containing ADMIN, MANAGER, STAFF, RECEPTIONIST)
+            boolean isStaff = roles.stream().anyMatch(role ->
+                    role.equalsIgnoreCase("ADMIN") ||
+                            role.equalsIgnoreCase("MANAGER") ||
+                            role.equalsIgnoreCase("STAFF") ||
+                            role.equalsIgnoreCase("RECEPTIONIST")
+            );
+
+            // 4️⃣ Fetch user from DB
             if (isStaff) {
-                Optional<Staff> staffOpt = staffRepository.findById(id);
-                if (staffOpt.isEmpty()) {
-                    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "Staff not found"));
-                }
-                Staff staff = staffOpt.get();
+                Staff staff = staffRepository.findById(userId)
+                        .orElseThrow(() -> new RuntimeException("Staff not found"));
                 return buildStaffResponse(staff);
             } else {
-                Optional<Guest> guestOpt = guestRepository.findById(id);
-                if (guestOpt.isEmpty()) {
-                    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "Guest not found"));
-                }
-                Guest guest = guestOpt.get();
+                Guest guest = guestRepository.findById(userId)
+                        .orElseThrow(() -> new RuntimeException("Guest not found"));
                 return buildGuestResponse(guest);
             }
+
+        } catch (NumberFormatException e) {
+            log.error("Invalid user ID in token: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Invalid token subject"));
         } catch (Exception e) {
             log.error("Error getting current user: {}", e.getMessage());
             auditLogService.logAuthService(null, "GET_CURRENT_USER_ERROR", Map.of("error", e.getMessage()));
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to fetch user");
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", "Failed to fetch user"));
         }
     }
 
-    // ------------------ Helpers ------------------
+    // ---------------- LOGOUT ---------------- //
+    @Override
+    public ResponseEntity<?> logout(HttpServletResponse response) {
+        response.addHeader(HttpHeaders.SET_COOKIE, jwtUtils.clearAccessTokenCookie().toString());
+        response.addHeader(HttpHeaders.SET_COOKIE, jwtUtils.clearRefreshTokenCookie().toString());
+        auditLogService.logAuthService(null, "LOGOUT_SUCCESS", Map.of("message", "User logged out"));
+        return ResponseEntity.ok("Logged out successfully");
+    }
+
+    // ---------------- HELPERS ---------------- //
     private ResponseEntity<?> buildStaffResponse(Staff staff) {
-        var staffResponse = StaffResponseDTO.builder()
+        StaffResponseDTO dto = StaffResponseDTO.builder()
                 .id(staff.getId())
                 .fullName(staff.getFullName())
                 .email(staff.getEmail())
@@ -361,15 +348,13 @@ public class AuthServiceImpl implements AuthService {
                         .location(staff.getHotel().getLocation())
                         .contactNumber(staff.getHotel().getContactNumber())
                         .email(staff.getHotel().getEmail())
-                        .build()
-                        : null)
+                        .build() : null)
                 .build();
-
-        return ResponseEntity.ok(Map.of("type", "STAFF", "data", staffResponse));
+        return ResponseEntity.ok(Map.of("userType", "STAFF", "user", dto));
     }
 
     private ResponseEntity<?> buildGuestResponse(Guest guest) {
-        var guestResponse = GuestResponseDTO.builder()
+        GuestResponseDTO dto = GuestResponseDTO.builder()
                 .id(guest.getId())
                 .fullName(guest.getFullName())
                 .email(guest.getEmail())
@@ -378,7 +363,6 @@ public class AuthServiceImpl implements AuthService {
                 .gender(guest.getGender())
                 .role(guest.getRole())
                 .build();
-
-        return ResponseEntity.ok(Map.of("type", "GUEST", "data", guestResponse));
+        return ResponseEntity.ok(Map.of("userType", "GUEST", "user", dto));
     }
 }

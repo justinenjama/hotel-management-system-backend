@@ -3,6 +3,7 @@ package com.justine.controller;
 import com.justine.dtos.request.BookingRequestDTO;
 import com.justine.dtos.request.PaymentRequestDTO;
 import com.justine.dtos.response.BookingResponseDTO;
+import com.justine.dtos.response.InvoiceResponseDTO;
 import com.justine.dtos.response.PaymentResponseDTO;
 import com.justine.dtos.response.RoomResponseDTO;
 import com.justine.service.BookingService;
@@ -25,46 +26,59 @@ public class BookingController {
         this.bookingService = bookingService;
     }
 
+    // --- Utility method to extract userId from Principal ---
+    private Long extractUserId(Principal principal) {
+        try {
+            return (principal != null) ? Long.parseLong(principal.getName()) : null;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
 
     @PostMapping
     public ResponseEntity<BookingResponseDTO> createBooking(@RequestBody BookingRequestDTO dto, Principal principal) {
-        return bookingService.createBooking(dto, principal == null ? null : principal.getName());
+        return bookingService.createBooking(dto, extractUserId(principal));
     }
 
     @GetMapping("/{id}")
     public ResponseEntity<BookingResponseDTO> getBooking(@PathVariable Long id, Principal principal) {
-        return bookingService.getBooking(id, principal == null ? null : principal.getName());
+        return bookingService.getBooking(id, extractUserId(principal));
     }
 
     @GetMapping("/guest/{guestId}")
     public ResponseEntity<List<BookingResponseDTO>> listBookingsForGuest(@PathVariable Long guestId, Principal principal) {
-        return bookingService.listBookingsForGuest(guestId, principal == null ? null : principal.getName());
+        return bookingService.listBookingsForGuest(guestId, extractUserId(principal));
     }
 
     @PostMapping("/{id}/services")
-    public ResponseEntity<BookingResponseDTO> addServices(@PathVariable Long id, @RequestBody List<Long> serviceIds, Principal principal) {
-        return bookingService.addServicesToBooking(id, serviceIds, principal == null ? null : principal.getName());
+    public ResponseEntity<BookingResponseDTO> addServices(
+            @PathVariable Long id,
+            @RequestBody List<Long> serviceIds,
+            Principal principal
+    ) {
+        return bookingService.addServicesToBooking(id, serviceIds, extractUserId(principal));
     }
 
     @PostMapping("/pay")
     public ResponseEntity<PaymentResponseDTO> pay(@RequestBody PaymentRequestDTO dto, Principal principal) {
-        return bookingService.makePayment(dto, principal == null ? null : principal.getName());
+        return bookingService.makePayment(dto, extractUserId(principal));
     }
 
     @PostMapping("/{id}/cancel")
-    public ResponseEntity<Void> cancel(@PathVariable Long id, Principal principal) {
-        return bookingService.cancelBooking(id, principal == null ? null : principal.getName());
+    public ResponseEntity<BookingResponseDTO> cancel(@PathVariable Long id, Principal principal) {
+        return bookingService.cancelBooking(id, extractUserId(principal));
     }
 
     @GetMapping("/code/{bookingCode}")
     public ResponseEntity<BookingResponseDTO> getByBookingCode(@PathVariable String bookingCode, Principal principal) {
-        return bookingService.findByBookingCode(bookingCode, principal == null ? null : principal.getName());
+        return bookingService.findByBookingCode(bookingCode, extractUserId(principal));
     }
 
     @GetMapping("/available")
     public ResponseEntity<List<RoomResponseDTO>> getAvailableRooms(
             @RequestParam("start") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate start,
-            @RequestParam("end") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate end) {
+            @RequestParam("end") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate end
+    ) {
         return bookingService.findAvailableRooms(start, end);
     }
 
@@ -75,7 +89,7 @@ public class BookingController {
 
     @GetMapping
     public ResponseEntity<List<BookingResponseDTO>> getAllBookings(Principal principal) {
-        return bookingService.getAllBookings(principal == null ? null : principal.getName());
+        return bookingService.getAllBookings(extractUserId(principal));
     }
 
     @GetMapping("/filter")
@@ -85,21 +99,21 @@ public class BookingController {
             @RequestParam(required = false) String status,
             Principal principal
     ) {
-        return bookingService.filterBookings(startDate, endDate, status, principal == null ? null : principal.getName());
+        return bookingService.filterBookings(startDate, endDate, status, extractUserId(principal));
     }
 
     @PostMapping("/{id}/check-in")
     public ResponseEntity<BookingResponseDTO> checkIn(@PathVariable Long id, Principal principal) {
-        return bookingService.checkIn(id, principal == null ? null : principal.getName());
+        return bookingService.checkIn(id, extractUserId(principal));
     }
 
     @PostMapping("/{id}/check-out")
     public ResponseEntity<BookingResponseDTO> checkOut(@PathVariable Long id, Principal principal) {
-        return bookingService.checkOut(id, principal == null ? null : principal.getName());
+        return bookingService.checkOut(id, extractUserId(principal));
     }
 
     @PostMapping("/{id}/invoice")
-    public ResponseEntity<Void> generateInvoice(@PathVariable Long id, Principal principal) {
-        return bookingService.generateInvoice(id, principal == null ? null : principal.getName());
+    public ResponseEntity<InvoiceResponseDTO> generateInvoice(@PathVariable Long id, Principal principal) {
+        return bookingService.generateInvoice(id, extractUserId(principal));
     }
 }

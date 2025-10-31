@@ -4,7 +4,7 @@ import com.justine.dtos.request.InvoiceRequestDTO;
 import com.justine.dtos.response.InvoiceResponseDTO;
 
 public interface InvoiceService {
-    InvoiceResponseDTO generateInvoice(InvoiceRequestDTO dto);
+    InvoiceResponseDTO generateInvoice(InvoiceRequestDTO dto, Long currentUserId);
 
-    InvoiceResponseDTO viewInvoice(Long bookingId);
+    InvoiceResponseDTO viewInvoice(Long bookingId, Long currentUserId);
 }

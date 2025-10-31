@@ -18,6 +18,8 @@ public class Room {
 
     private String roomNumber;
 
+    private String roomImageUrl;
+
     @Enumerated(EnumType.STRING)
     private RoomType type;
 

@@ -10,6 +10,7 @@ import lombok.*;
 public class RoomResponseDTO {
     private Long id;
     private String roomNumber;
+    private String roomImageUrl;
     private RoomType type;
     private Double pricePerNight;
     private boolean available;

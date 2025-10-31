@@ -2,8 +2,9 @@ package com.justine.utils;
 
 import com.justine.model.Invoice;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
-import java.io.File;
+import java.util.Map;
 
 @Service
 public class InvoiceServiceHelper {
@@ -15,25 +16,23 @@ public class InvoiceServiceHelper {
     }
 
     /**
-     * Generate PDF, upload to Cloudinary, and return URL
+     * Generate PDF in memory, upload to Cloudinary, and return the public URL for the large size.
+     * The invoice object will store all generated sizes.
      */
     public String generateAndUploadInvoice(Invoice invoice) {
         try {
-            // 1. Generate local PDF file
-            File pdfFile = InvoicePdfGenerator.generateReceipt(invoice, "invoices");
+            // 1. Generate the PDF as MultipartFile (in memory)
+            MultipartFile pdfFile = InvoicePdfGenerator.generateReceipt(invoice);
 
-            // 2. Upload to Cloudinary under folder "invoices"
-            String url = cloudinaryService.uploadFile(pdfFile, "invoices");
+            // 2. Upload to Cloudinary under folder "invoices" with eager sizes
+            Map<String, String> urls = cloudinaryService.uploadFileWithEagerSizes(pdfFile, "invoices");
 
-            // 3. Save URL to invoice
-            invoice.setInvoiceUrl(url);
+            // 3. Save URLs to the invoice object
+            invoice.setInvoiceUrl(urls.get("large"));          // main invoice URL
+            invoice.setInvoiceUrlMedium(urls.get("medium"));   // optional medium size
+            invoice.setInvoiceUrlThumbnail(urls.get("thumbnail")); // optional thumbnail
 
-            // 4. Delete local file after upload (optional cleanup)
-            if (pdfFile.exists()) {
-                pdfFile.delete();
-            }
-
-            return url;
+            return urls.get("large");
         } catch (Exception e) {
             throw new RuntimeException("Failed to generate and upload invoice: " + e.getMessage(), e);
         }

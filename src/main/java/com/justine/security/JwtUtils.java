@@ -6,8 +6,9 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
-import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ResponseCookie;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
@@ -37,52 +38,45 @@ public class JwtUtils {
         return Keys.hmacShaKeyFor(keyBytes);
     }
 
-    // --------------------- TOKEN GENERATION --------------------- //
+    // --- TOKEN GENERATION ---
     public String generateToken(Guest guest) {
-        Map<String, Object> claims = new HashMap<>();
-        claims.put("roles", List.of(guest.getRole()));
-        return generateToken(claims, guest.getId().toString(), jwtExpirationMs);
+        Map<String, Object> claims = Map.of("roles", List.of(guest.getRole()));
+        return buildToken(claims, guest.getId().toString(), jwtExpirationMs);
     }
 
     public String generateToken(Staff staff) {
-        Map<String, Object> claims = new HashMap<>();
-        claims.put("roles", List.of(staff.getRole().name()));
-        return generateToken(claims, staff.getId().toString(), jwtExpirationMs);
+        Map<String, Object> claims = Map.of("roles", List.of(staff.getRole().name()));
+        return buildToken(claims, staff.getId().toString(), jwtExpirationMs);
     }
 
     public String generateRefreshToken(Guest guest) {
-        Map<String, Object> claims = new HashMap<>();
-        claims.put("roles", List.of(guest.getRole()));
-        return generateToken(claims, guest.getId().toString(), jwtRefreshExpirationMs);
+        Map<String, Object> claims = Map.of("roles", List.of(guest.getRole()));
+        return buildToken(claims, guest.getId().toString(), jwtRefreshExpirationMs);
     }
 
     public String generateRefreshToken(Staff staff) {
-        Map<String, Object> claims = new HashMap<>();
-        claims.put("roles", List.of(staff.getRole().name()));
-        return generateToken(claims, staff.getId().toString(), jwtRefreshExpirationMs);
+        Map<String, Object> claims = Map.of("roles", List.of(staff.getRole().name()));
+        return buildToken(claims, staff.getId().toString(), jwtRefreshExpirationMs);
     }
 
-    private String generateToken(Map<String, Object> claims, String subject, long expirationMs) {
+    private String buildToken(Map<String, Object> claims, String subject, long exp) {
         return Jwts.builder()
                 .claims(claims)
                 .subject(subject)
                 .issuer(jwtIssuer)
                 .issuedAt(new Date())
-                .expiration(new Date(System.currentTimeMillis() + expirationMs))
+                .expiration(new Date(System.currentTimeMillis() + exp))
                 .signWith(getSignInKey())
                 .compact();
     }
 
-    // --------------------- TOKEN VALIDATION --------------------- //
+    // --- VALIDATION ---
     public boolean isTokenValid(String token) {
-        try {
-            return !isTokenExpired(token);
-        } catch (Exception ex) {
-            return false;
-        }
+        try { return !isTokenExpired(token); }
+        catch (Exception e) { return false; }
     }
 
-    public boolean isTokenExpired(String token) {
+    private boolean isTokenExpired(String token) {
         return extractExpiration(token).before(new Date());
     }
 
@@ -90,72 +84,88 @@ public class JwtUtils {
         return extractClaim(token, Claims::getSubject);
     }
 
-    public Date extractExpiration(String token) {
-        return extractClaim(token, Claims::getExpiration);
-    }
-
-    public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
-        final Claims claims = extractAllClaims(token);
-        return claimsResolver.apply(claims);
-    }
-
-    // --------------------- CLAIMS --------------------- //
-    public Claims extractAllClaims(String token) {
-        return Jwts.parser()
-                .verifyWith(getSignInKey())
-                .build()
-                .parseSignedClaims(token)
-                .getPayload();
-    }
-
     public List<String> extractRoles(String token) {
         Object roles = extractAllClaims(token).get("roles");
-        if (roles instanceof List<?> roleList) {
-            return roleList.stream()
-                    .filter(String.class::isInstance)
-                    .map(String.class::cast)
-                    .toList();
-        }
+        if (roles instanceof List<?> list)
+            return list.stream().filter(String.class::isInstance).map(String.class::cast).toList();
         return List.of();
     }
 
-    // --------------------- COOKIE HELPERS --------------------- //
-    public Cookie generateAccessTokenCookie(String token) {
-        Cookie cookie = new Cookie(ACCESS_COOKIE_NAME, token);
-        cookie.setHttpOnly(true);
-        cookie.setSecure(true); // set false for dev
-        cookie.setPath("/");
-        cookie.setMaxAge((int) (jwtExpirationMs / 1000));
-        return cookie;
+    private Date extractExpiration(String token) {
+        return extractClaim(token, Claims::getExpiration);
     }
 
-    public Cookie generateRefreshTokenCookie(String token) {
-        Cookie cookie = new Cookie(REFRESH_COOKIE_NAME, token);
-        cookie.setHttpOnly(true);
-        cookie.setSecure(true); // set false for dev
-        cookie.setPath("/auth/refresh");
-        cookie.setMaxAge((int) (jwtRefreshExpirationMs / 1000));
-        return cookie;
+    private <T> T extractClaim(String token, Function<Claims, T> fn) {
+        return fn.apply(extractAllClaims(token));
     }
 
-    public Cookie clearAccessTokenCookie() {
-        Cookie cookie = new Cookie(ACCESS_COOKIE_NAME, null);
-        cookie.setHttpOnly(true);
-        cookie.setSecure(true);
-        cookie.setPath("/");
-        cookie.setMaxAge(0);
-        return cookie;
+    private Claims extractAllClaims(String token) {
+        return Jwts.parser().verifyWith(getSignInKey()).build().parseSignedClaims(token).getPayload();
     }
 
-    public Cookie clearRefreshTokenCookie() {
-        Cookie cookie = new Cookie(REFRESH_COOKIE_NAME, null);
-        cookie.setHttpOnly(true);
-        cookie.setSecure(true);
-        cookie.setPath("/auth/refresh");
-        cookie.setMaxAge(0);
-        return cookie;
+    // --- COOKIES ---
+    public ResponseCookie generateAccessTokenCookie(String token) {
+        return baseCookie(ACCESS_COOKIE_NAME, token, jwtExpirationMs / 1000, "/");
     }
+
+    public ResponseCookie generateRefreshTokenCookie(String token) {
+        return baseCookie(REFRESH_COOKIE_NAME, token, jwtRefreshExpirationMs / 1000, "/auth/refresh");
+    }
+
+    public ResponseCookie clearAccessTokenCookie() {
+        return baseCookie(ACCESS_COOKIE_NAME, "", 0, "/");
+    }
+
+    public ResponseCookie clearRefreshTokenCookie() {
+        return baseCookie(REFRESH_COOKIE_NAME, "", 0, "/auth/refresh");
+    }
+
+    private ResponseCookie baseCookie(String name, String val, long maxAge, String path) {
+        boolean isDev = true; // or inject a property
+        return ResponseCookie.from(name, val)
+                .httpOnly(true)
+                .secure(!isDev) // false in dev, true in prod
+                .sameSite(isDev ? "Lax" : "None")
+                .path(path)
+                .maxAge(maxAge)
+                .build();
+    }
+
 
     public static String getAccessCookieName() { return ACCESS_COOKIE_NAME; }
     public static String getRefreshCookieName() { return REFRESH_COOKIE_NAME; }
+
+    /**
+     * Extracts the JWT from the request cookies or Authorization header
+     */
+    public String extractTokenFromRequest(HttpServletRequest request) {
+        // 1. Try from cookie first
+        if (request.getCookies() != null) {
+            for (var cookie : request.getCookies()) {
+                if (ACCESS_COOKIE_NAME.equals(cookie.getName())) {
+                    return cookie.getValue();
+                }
+            }
+        }
+        // 2. Fallback: Bearer token in Authorization header
+        String header = request.getHeader("Authorization");
+        if (header != null && header.startsWith("Bearer ")) {
+            return header.substring(7);
+        }
+        return null;
+    }
+
+    /**
+     * Get the 'sub' claim from JWT (user ID)
+     */
+    public String getSubject(String token) {
+        return extractSubject(token);
+    }
+
+    /**
+     * Get the 'roles' claim from JWT as a list of strings
+     */
+    public List<String> getRoles(String token) {
+        return extractRoles(token);
+    }
 }

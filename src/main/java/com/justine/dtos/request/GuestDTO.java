@@ -12,6 +12,7 @@ public class GuestDTO {
     private String idNumber;
     private String phoneNumber;
     private String gender;
+    private String oldPassword;
     private String password;
     private String confirmPassword;
 }

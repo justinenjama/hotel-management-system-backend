@@ -1,5 +1,6 @@
 package com.justine.dtos.response;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 import lombok.AllArgsConstructor;
@@ -19,6 +20,7 @@ public class GuestResponseDTO {
     private String idNumber; 
     private String gender;
     private String role;
+    private LocalDateTime createdAt;
     private List<BookingResponseDTO> bookings;
     private List<RestaurantOrderResponseDTO> restaurantOrders;
 }

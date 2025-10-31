@@ -8,12 +8,11 @@ import com.justine.model.Staff;
 import com.justine.repository.PasswordResetTokenRepository;
 import com.justine.repository.GuestRepository;
 import com.justine.repository.StaffRepository;
+import com.justine.security.RateLimitService;
 import com.justine.service.AuditLogService;
 import com.justine.service.EmailService;
 import com.justine.service.PasswordResetService;
-
 import jakarta.servlet.http.HttpServletRequest;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.bcrypt.BCrypt;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -21,7 +20,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.*;
+import java.util.Optional;
+import java.util.UUID;
 
 @Slf4j
 @Service
@@ -34,12 +34,19 @@ public class PasswordResetServiceImpl implements PasswordResetService {
     private final PasswordEncoder passwordEncoder;
     private final AuditLogService auditLogService;
     private final HttpServletRequest httpServletRequest;
+    private final RateLimitService rateLimitService;
 
     private static final int EXPIRATION_MINUTES = 15;
-    private static final int RATE_LIMIT_SECONDS = 60; // 1 request per minute
-    private final Map<String, LocalDateTime> lastRequestTime = new HashMap<>();
 
-    public PasswordResetServiceImpl(GuestRepository guestRepository, StaffRepository staffRepository, EmailService emailService, PasswordResetTokenRepository tokenRepository, PasswordEncoder passwordEncoder, AuditLogService auditLogService, HttpServletRequest httpServletRequest) {
+    public PasswordResetServiceImpl(
+            GuestRepository guestRepository,
+            StaffRepository staffRepository,
+            EmailService emailService,
+            PasswordResetTokenRepository tokenRepository,
+            PasswordEncoder passwordEncoder,
+            AuditLogService auditLogService,
+            HttpServletRequest httpServletRequest,
+            RateLimitService rateLimitService) {
         this.guestRepository = guestRepository;
         this.staffRepository = staffRepository;
         this.emailService = emailService;
@@ -47,28 +54,36 @@ public class PasswordResetServiceImpl implements PasswordResetService {
         this.passwordEncoder = passwordEncoder;
         this.auditLogService = auditLogService;
         this.httpServletRequest = httpServletRequest;
+        this.rateLimitService = rateLimitService;
     }
 
     private enum AuditAction {
         REQUEST, RESET, FAILED
     }
 
+    private String getClientIp() {
+        String forwarded = httpServletRequest.getHeader("X-Forwarded-For");
+        return (forwarded != null) ? forwarded.split(",")[0] : httpServletRequest.getRemoteAddr();
+    }
+
     @Override
     @Transactional
     public void requestPasswordReset(PasswordResetRequestDto request) {
         String email = request.getEmail().trim().toLowerCase();
+        String ip = getClientIp();
 
-        // Rate limit check
-        LocalDateTime lastRequested = lastRequestTime.get(email);
-        if (lastRequested != null && lastRequested.plusSeconds(RATE_LIMIT_SECONDS).isAfter(LocalDateTime.now())) {
+        // Global rate limit per IP
+        if (!rateLimitService.allowRequest(ip, "passwordResetRequest")) {
+            log.warn("🚫 Password reset rate limit exceeded for IP {} (email={})", ip, email);
             auditLogService.logPasswordResetAction(
                     httpServletRequest,
                     AuditAction.FAILED.name(),
-                    "Password reset requested too soon for email: " + email
+                    "Rate limit exceeded for IP: " + ip + " on email: " + email
             );
             return;
         }
 
+        // Prevent enumeration: don’t reveal if email exists
         Optional<Guest> guestOpt = guestRepository.findByEmail(email);
         Optional<Staff> staffOpt = staffRepository.findByEmail(email);
 
@@ -79,15 +94,11 @@ public class PasswordResetServiceImpl implements PasswordResetService {
                     AuditAction.FAILED.name(),
                     "Password reset requested for non-existent email: " + email
             );
-            return; // Prevent email enumeration
+            return;
         }
 
-        String fullName;
-        if (guestOpt.isPresent()) {
-            fullName = guestOpt.get().getFullName();
-        } else {
-            fullName = staffOpt.get().getFullName();
-        }
+        String fullName = guestOpt.map(Guest::getFullName)
+                .orElseGet(() -> staffOpt.map(Staff::getFullName).orElse("User"));
 
         // Invalidate old tokens
         tokenRepository.markAllTokensUsedForEmail(email);
@@ -104,7 +115,8 @@ public class PasswordResetServiceImpl implements PasswordResetService {
                 .build();
         tokenRepository.save(token);
 
-        String resetLink = "https://justine-hotel.vercel.app/reset-password?token=" + rawToken;
+        // Send email asynchronously
+        String resetLink = "http://192.168.77.217:5173//reset-password?token=" + rawToken;
 
         String message = """
                 <p>Hello %s,</p>
@@ -114,22 +126,32 @@ public class PasswordResetServiceImpl implements PasswordResetService {
                 <p>If you did not request this, please ignore this email.</p>
                 """.formatted(fullName, resetLink, EXPIRATION_MINUTES);
 
-        emailService.sendEmail(email, "Password Reset Request", message);
+        emailService.sendEmail(email, "Password Reset Request", message, httpServletRequest);
 
         auditLogService.logPasswordResetAction(
                 httpServletRequest,
                 AuditAction.REQUEST.name(),
-                "Password reset link generated and sent to: " + email
+                "Password reset link generated and sent to: " + email + " (IP=" + ip + ")"
         );
 
-        lastRequestTime.put(email, LocalDateTime.now());
-        log.info("Password reset link sent to {}", email);
+        log.info("🔐 Password reset link sent to {} from IP {}", email, ip);
     }
 
     @Override
     @Transactional
     public void resetPassword(PasswordResetTokenDto request) {
         String rawToken = request.getToken();
+        String ip = getClientIp();
+
+        if (!rateLimitService.allowRequest(ip, "passwordResetConfirm")) {
+            log.warn("🚫 Rate limit exceeded for password reset confirmation from IP {}", ip);
+            auditLogService.logPasswordResetAction(
+                    httpServletRequest,
+                    AuditAction.FAILED.name(),
+                    "Rate limit exceeded for IP: " + ip + " during reset confirmation"
+            );
+            return;
+        }
 
         try {
             PasswordResetToken resetToken = tokenRepository.findAll().stream()
@@ -167,15 +189,15 @@ public class PasswordResetServiceImpl implements PasswordResetService {
                     <p>If this wasn’t you, please contact support immediately.</p>
                     """;
 
-            emailService.sendEmail(email, "Password Reset Successful", confirmationMsg);
+            emailService.sendEmail(email, "Password Reset Successful", confirmationMsg, httpServletRequest);
 
             auditLogService.logPasswordResetAction(
                     httpServletRequest,
                     AuditAction.RESET.name(),
-                    "Password successfully reset for email: " + email
+                    "Password successfully reset for email: " + email + " (IP=" + ip + ")"
             );
 
-            log.info("Password reset successful for {}", email);
+            log.info("✅ Password reset successful for {} (IP={})", email, ip);
 
         } catch (RuntimeException e) {
             auditLogService.logPasswordResetAction(

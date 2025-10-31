@@ -15,5 +15,6 @@ public class RestaurantOrderResponseDTO {
     private OrderStatus status;
     private Double totalAmount;
     private GuestResponseDTO guest;
+    private Long hotelId;
     private List<OrderItemResponseDTO> orderItems;
 }

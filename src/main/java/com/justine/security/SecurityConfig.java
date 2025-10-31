@@ -41,16 +41,20 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         // Public endpoints
-                        .requestMatchers("/auth/**", "/password-reset/**",  "/swagger-ui/**", "/v3/api-docs/**").permitAll()
-                        // Admin-only endpoints
+                        .requestMatchers(
+                                "/auth/**",
+                                "/contact",
+                                "/hotels/**",
+                                "/password-reset/**",
+                                "/swagger-ui/**",
+                                "/v3/api-docs/**"
+                        ).permitAll()
+
+                        // Role-based protection
                         .requestMatchers("/admin/**").hasRole("ADMIN")
-                        // Manager endpoints
                         .requestMatchers("/manager/**").hasRole("MANAGER")
-                        // Staff endpoints
                         .requestMatchers("/staff/**").hasAnyRole("STAFF", "MANAGER", "ADMIN")
-                        // Guest endpoints
-                        .requestMatchers("/guest/**").hasRole("USER")
-                        // All other endpoints require authentication
+                        .requestMatchers("/guest/**").hasRole("GUEST")
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtCookieFilter, UsernamePasswordAuthenticationFilter.class);
@@ -58,22 +62,26 @@ public class SecurityConfig {
         return http.build();
     }
 
+
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOrigins(List.of(
                 "http://localhost:5173",
-                "https://your-frontend-domain.com"
+                "http://192.168.137.1:5173",
+                "http://192.168.77.217:5173",
+                "http://10.28.150.158:5173",
+                "http://10.149.0.31:5173"
         ));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of("Content-Type", "X-Requested-With"));
+        config.setAllowedHeaders(List.of("Content-Type", "Authorization", "X-Requested-With"));
         config.setAllowCredentials(true);
+        config.setExposedHeaders(List.of("Set-Cookie"));
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", config);
         return source;
     }
-
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();

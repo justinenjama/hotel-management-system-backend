@@ -7,6 +7,13 @@ import java.util.List;
 import com.justine.enums.BookingStatus;
 
 @Entity
+@Table(indexes = {
+        @Index(name = "idx_booking_guest_id", columnList = "guest_id"),
+        @Index(name = "idx_booking_room_id", columnList = "room_id"),
+        @Index(name = "idx_booking_checkin_checkout", columnList = "checkInDate, checkOutDate"),
+        @Index(name = "idx_booking_status", columnList = "status")
+})
+
 @Data
 @NoArgsConstructor
 @AllArgsConstructor

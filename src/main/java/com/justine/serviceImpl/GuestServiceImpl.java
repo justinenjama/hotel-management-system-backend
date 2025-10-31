@@ -8,11 +8,11 @@ import com.justine.repository.GuestRepository;
 import com.justine.repository.RestaurantOrderRepository;
 import com.justine.service.AuditLogService;
 import com.justine.service.GuestService;
-
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -37,10 +37,21 @@ public class GuestServiceImpl implements GuestService {
         this.auditLogService = auditLogService;
     }
 
-    private boolean isAdmin(String email) {
-        return guestRepository.findByEmail(email)
-                .map(g -> "ADMIN".equalsIgnoreCase(g.getRole()))
-                .orElse(false);
+    private boolean isAdmin() {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+    }
+
+    private Long getCurrentUserId() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getName() == null) return null;
+        try {
+            return Long.parseLong(auth.getName());
+        } catch (NumberFormatException e) {
+            log.error("Failed to parse current user ID from principal: {}", auth.getName());
+            return null;
+        }
     }
 
     @Override
@@ -77,56 +88,81 @@ public class GuestServiceImpl implements GuestService {
     }
 
     @Override
-    public ResponseEntity<GuestResponseDTO> updateGuest(Long guestId, GuestDTO dto, String currentUserEmail) {
+    public ResponseEntity<GuestResponseDTO> updateGuest(Long guestId, GuestDTO dto, Long currentUserId) {
         try {
             Guest guest = guestRepository.findById(guestId)
                     .orElseThrow(() -> new NoSuchElementException("Guest not found"));
 
-            if (!isAdmin(currentUserEmail) && !guest.getEmail().equals(currentUserEmail)) {
-                log.warn("Unauthorized guest update attempt by {}", currentUserEmail);
-                return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+            boolean admin = isAdmin();
+            boolean selfUpdate = guest.getId().equals(currentUserId);
+
+            if (!admin && !selfUpdate) {
+                log.warn("Unauthorized guest update attempt by {}", currentUserId);
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body((GuestResponseDTO) Map.of("error", "You are not allowed to update this guest"));
             }
 
-            guest.setFullName(dto.getFullName());
-            guest.setPhoneNumber(dto.getPhoneNumber());
-            guest.setIdNumber(dto.getIdNumber());
+            // Update provided fields
+            if (dto.getFullName() != null) guest.setFullName(dto.getFullName());
+            if (dto.getPhoneNumber() != null) guest.setPhoneNumber(dto.getPhoneNumber());
+            if (dto.getIdNumber() != null) guest.setIdNumber(dto.getIdNumber());
+            if (dto.getGender() != null) guest.setGender(dto.getGender());
+            if (dto.getEmail() != null) guest.setEmail(dto.getEmail());
+
+            // Password handling
             if (dto.getPassword() != null && !dto.getPassword().isEmpty()) {
-                guest.setPassword(passwordEncoder.encode(dto.getPassword()));
+                if (admin) {
+                    // Admin can directly set password
+                    guest.setPassword(passwordEncoder.encode(dto.getPassword()));
+                } else if (selfUpdate) {
+                    // Guest must provide old password to change
+                    if (dto.getOldPassword() == null || dto.getOldPassword().isEmpty()) {
+                        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                                .body((GuestResponseDTO) Map.of("error", "Old password is required"));
+                    }
+                    if (!passwordEncoder.matches(dto.getOldPassword(), guest.getPassword())) {
+                        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                                .body((GuestResponseDTO) Map.of("error", "Old password is incorrect"));
+                    }
+                    guest.setPassword(passwordEncoder.encode(dto.getPassword()));
+                }
             }
 
             guestRepository.save(guest);
-            log.info("Guest {} updated successfully by {}", guestId, currentUserEmail);
+            log.info("Guest {} updated successfully by {}", guestId, currentUserId);
 
             auditLogService.logGuest(guestId, "UPDATE_GUEST", guestId,
-                    Map.of("updatedBy", currentUserEmail, "newName", dto.getFullName()));
+                    Map.of("updatedBy", currentUserId, "newName", guest.getFullName()));
 
             return ResponseEntity.ok(toGuestResponse(guest));
+
         } catch (NoSuchElementException e) {
             log.warn("Guest not found: {}", guestId);
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body((GuestResponseDTO) Map.of("error", "Guest not found"));
         } catch (Exception e) {
             log.error("Error updating guest {}: {}", guestId, e.getMessage(), e);
             auditLogService.logGuest(guestId, "UPDATE_GUEST_ERROR", guestId,
-                    Map.of("error", e.getMessage(), "updatedBy", currentUserEmail));
-            return ResponseEntity.internalServerError().build();
+                    Map.of("error", e.getMessage(), "updatedBy", currentUserId));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body((GuestResponseDTO) Map.of("error", "Failed to update guest"));
         }
     }
 
     @Override
-    public ResponseEntity<GuestResponseDTO> getGuestById(Long id, String currentUserEmail) {
+    public ResponseEntity<GuestResponseDTO> getGuestById(Long id, Long currentUserId) {
         try {
             Guest guest = guestRepository.findById(id)
                     .orElseThrow(() -> new NoSuchElementException("Guest not found"));
 
-            if (!isAdmin(currentUserEmail) && !guest.getEmail().equals(currentUserEmail)) {
-                log.warn("Unauthorized access to guest {} by {}", id, currentUserEmail);
+            if (!isAdmin() && !guest.getId().equals(currentUserId)) {
+                log.warn("Unauthorized access to guest {} by {}", id, currentUserId);
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
             }
 
-            auditLogService.logGuest(id, "VIEW_GUEST", id,
-                    Map.of("viewer", currentUserEmail));
+            auditLogService.logGuest(id, "VIEW_GUEST", id, Map.of("viewer", currentUserId));
 
-            log.info("Guest {} viewed by {}", id, currentUserEmail);
+            log.info("Guest {} viewed by {}", id, currentUserId);
             return ResponseEntity.ok(toGuestResponse(guest));
         } catch (NoSuchElementException e) {
             log.warn("Guest not found: {}", id);
@@ -138,10 +174,10 @@ public class GuestServiceImpl implements GuestService {
     }
 
     @Override
-    public ResponseEntity<List<GuestResponseDTO>> getAllGuests(String currentUserEmail) {
+    public ResponseEntity<List<GuestResponseDTO>> getAllGuests(Long currentUserId) {
         try {
-            if (!isAdmin(currentUserEmail)) {
-                log.warn("Unauthorized guest list access attempt by {}", currentUserEmail);
+            if (!isAdmin()) {
+                log.warn("Unauthorized guest list access attempt by {}", currentUserId);
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
             }
 
@@ -150,50 +186,49 @@ public class GuestServiceImpl implements GuestService {
                     .map(this::toGuestResponse)
                     .collect(Collectors.toList());
 
-            log.info("Guest list retrieved successfully by {} ({} records)", currentUserEmail, guests.size());
+            log.info("Guest list retrieved successfully by {} ({} records)", currentUserId, guests.size());
             auditLogService.logGuest(null, "LIST_GUESTS", null,
-                    Map.of("requestedBy", currentUserEmail, "count", guests.size()));
+                    Map.of("requestedBy", currentUserId, "count", guests.size()));
 
             return ResponseEntity.ok(guests);
         } catch (Exception e) {
             log.error("Error listing guests: {}", e.getMessage(), e);
             auditLogService.logGuest(null, "LIST_GUESTS_ERROR", null,
-                    Map.of("requestedBy", currentUserEmail, "error", e.getMessage()));
+                    Map.of("requestedBy", currentUserId, "error", e.getMessage()));
             return ResponseEntity.internalServerError().build();
         }
     }
 
     @Override
-    public ResponseEntity<Void> deleteGuest(Long id, String currentUserEmail) {
+    public ResponseEntity<Void> deleteGuest(Long id, Long currentUserId) {
         try {
-            if (!isAdmin(currentUserEmail)) {
-                log.warn("Unauthorized delete attempt by {}", currentUserEmail);
+            if (!isAdmin()) {
+                log.warn("Unauthorized delete attempt by {}", currentUserId);
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
             }
 
             guestRepository.deleteById(id);
-            log.info("Guest {} deleted successfully by {}", id, currentUserEmail);
+            log.info("Guest {} deleted successfully by {}", id, currentUserId);
 
-            auditLogService.logGuest(id, "DELETE_GUEST", id,
-                    Map.of("deletedBy", currentUserEmail));
+            auditLogService.logGuest(id, "DELETE_GUEST", id, Map.of("deletedBy", currentUserId));
 
             return ResponseEntity.noContent().build();
         } catch (Exception e) {
             log.error("Error deleting guest {}: {}", id, e.getMessage(), e);
             auditLogService.logGuest(id, "DELETE_GUEST_ERROR", id,
-                    Map.of("deletedBy", currentUserEmail, "error", e.getMessage()));
+                    Map.of("deletedBy", currentUserId, "error", e.getMessage()));
             return ResponseEntity.internalServerError().build();
         }
     }
 
     @Override
-    public ResponseEntity<List<GuestResponseDTO>> getGuestBookings(Long guestId, String currentUserEmail) {
+    public ResponseEntity<List<GuestResponseDTO>> getGuestBookings(Long guestId, Long currentUserId) {
         try {
             Guest guest = guestRepository.findById(guestId)
                     .orElseThrow(() -> new NoSuchElementException("Guest not found"));
 
-            if (!isAdmin(currentUserEmail) && !guest.getEmail().equals(currentUserEmail)) {
-                log.warn("Unauthorized access to bookings of guest {} by {}", guestId, currentUserEmail);
+            if (!isAdmin() && !guest.getId().equals(currentUserId)) {
+                log.warn("Unauthorized access to bookings of guest {} by {}", guestId, currentUserId);
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
             }
 
@@ -202,27 +237,27 @@ public class GuestServiceImpl implements GuestService {
                     .map(b -> toGuestResponse(b.getGuest()))
                     .collect(Collectors.toList());
 
-            log.info("Guest {} bookings fetched successfully by {}", guestId, currentUserEmail);
+            log.info("Guest {} bookings fetched successfully by {}", guestId, currentUserId);
             auditLogService.logGuest(guestId, "VIEW_BOOKINGS", guestId,
-                    Map.of("viewer", currentUserEmail, "bookingCount", response.size()));
+                    Map.of("viewer", currentUserId, "bookingCount", response.size()));
 
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("Error fetching guest bookings for {}: {}", guestId, e.getMessage(), e);
             auditLogService.logGuest(guestId, "VIEW_BOOKINGS_ERROR", guestId,
-                    Map.of("viewer", currentUserEmail, "error", e.getMessage()));
+                    Map.of("viewer", currentUserId, "error", e.getMessage()));
             return ResponseEntity.internalServerError().build();
         }
     }
 
     @Override
-    public ResponseEntity<List<GuestResponseDTO>> getGuestOrders(Long guestId, String currentUserEmail) {
+    public ResponseEntity<List<GuestResponseDTO>> getGuestOrders(Long guestId, Long currentUserId) {
         try {
             Guest guest = guestRepository.findById(guestId)
                     .orElseThrow(() -> new NoSuchElementException("Guest not found"));
 
-            if (!isAdmin(currentUserEmail) && !guest.getEmail().equals(currentUserEmail)) {
-                log.warn("Unauthorized access to orders of guest {} by {}", guestId, currentUserEmail);
+            if (!isAdmin() && !guest.getId().equals(currentUserId)) {
+                log.warn("Unauthorized access to orders of guest {} by {}", guestId, currentUserId);
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
             }
 
@@ -231,15 +266,15 @@ public class GuestServiceImpl implements GuestService {
                     .map(o -> toGuestResponse(o.getGuest()))
                     .collect(Collectors.toList());
 
-            log.info("Guest {} orders fetched successfully by {}", guestId, currentUserEmail);
+            log.info("Guest {} orders fetched successfully by {}", guestId, currentUserId);
             auditLogService.logGuest(guestId, "VIEW_ORDERS", guestId,
-                    Map.of("viewer", currentUserEmail, "orderCount", response.size()));
+                    Map.of("viewer", currentUserId, "orderCount", response.size()));
 
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("Error fetching guest orders for {}: {}", guestId, e.getMessage(), e);
             auditLogService.logGuest(guestId, "VIEW_ORDERS_ERROR", guestId,
-                    Map.of("viewer", currentUserEmail, "error", e.getMessage()));
+                    Map.of("viewer", currentUserId, "error", e.getMessage()));
             return ResponseEntity.internalServerError().build();
         }
     }
@@ -254,6 +289,7 @@ public class GuestServiceImpl implements GuestService {
                 .idNumber(guest.getIdNumber())
                 .role(guest.getRole())
                 .gender(guest.getGender())
+                .createdAt(guest.getCreatedAt())
                 .build();
     }
 }

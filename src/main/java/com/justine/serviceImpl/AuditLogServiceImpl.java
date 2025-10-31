@@ -5,13 +5,15 @@ import com.justine.model.AuditLog;
 import com.justine.repository.AuditLogRepository;
 import com.justine.service.AuditLogService;
 import jakarta.servlet.http.HttpServletRequest;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.*;
 
 @Service
 @Slf4j
@@ -20,28 +22,41 @@ public class AuditLogServiceImpl implements AuditLogService {
     private final AuditLogRepository auditLogRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    // Heavy job queue executor (optimized for high concurrency)
+    private final ExecutorService auditExecutor = new ThreadPoolExecutor(
+            4, // Core pool size
+            8, // Max pool size
+            60L, TimeUnit.SECONDS, // Idle thread timeout
+            new LinkedBlockingQueue<>(500), // Queue size
+            new ThreadPoolExecutor.CallerRunsPolicy() // Backpressure control
+    );
+
     public AuditLogServiceImpl(AuditLogRepository auditLogRepository) {
         this.auditLogRepository = auditLogRepository;
     }
 
-    // ------------------ Generic Save ------------------
+    // ------------------ Generic Save (Async Optimized) ------------------
+    @Async("auditExecutor")
+    @Transactional
     @Override
     public void logAction(Long actorId, String action, String entity, Long entityId, String metadataJson) {
-        try {
-            AuditLog logEntry = AuditLog.builder()
-                    .actorId(actorId)
-                    .action(action)
-                    .entity(entity)
-                    .entityId(entityId)
-                    .metadataJson(metadataJson)
-                    .createdAt(LocalDateTime.now())
-                    .build();
+        auditExecutor.submit(() -> {
+            try {
+                AuditLog logEntry = AuditLog.builder()
+                        .actorId(actorId)
+                        .action(action)
+                        .entity(entity)
+                        .entityId(entityId)
+                        .metadataJson(metadataJson)
+                        .createdAt(LocalDateTime.now())
+                        .build();
 
-            auditLogRepository.save(logEntry);
-            log.info("[AUDIT] {} | action={} | entityId={}", entity, action, entityId);
-        } catch (Exception e) {
-            log.error("[AUDIT ERROR] Could not save log for {}: {}", entity, e.getMessage());
-        }
+                auditLogRepository.save(logEntry);
+                log.debug("[AUDIT ✅] {} | action={} | entityId={}", entity, action, entityId);
+            } catch (Exception e) {
+                log.error("[AUDIT ERROR] Could not save log for {}: {}", entity, e.getMessage());
+            }
+        });
     }
 
     // ------------------ Booking Logs ------------------
@@ -69,7 +84,6 @@ public class AuditLogServiceImpl implements AuditLogService {
             Map<String, Object> metadata = new HashMap<>();
             metadata.put("bookingId", bookingId);
             metadata.put("invoiceUrl", invoiceUrl);
-
             String json = objectMapper.writeValueAsString(metadata);
             logAction(actorId, action, "Invoice", invoiceId, json);
         } catch (Exception e) {
@@ -110,47 +124,107 @@ public class AuditLogServiceImpl implements AuditLogService {
     // ------------------ Password Reset Logs ------------------
     @Override
     public void logPasswordResetAction(HttpServletRequest request, String action, String description) {
-        try {
-            String ip = getClientIp(request);
-            Map<String, Object> metadata = new HashMap<>();
-            metadata.put("ipAddress", ip);
-            metadata.put("description", description);
+        auditExecutor.submit(() -> {
+            try {
+                String ip = getClientIp(request);
+                Map<String, Object> metadata = new HashMap<>();
+                metadata.put("ipAddress", ip);
+                metadata.put("description", description);
+                String json = objectMapper.writeValueAsString(metadata);
 
-            String json = objectMapper.writeValueAsString(metadata);
+                AuditLog logEntry = AuditLog.builder()
+                        .actorId(null)
+                        .action(action)
+                        .entity("PasswordReset")
+                        .metadataJson(json)
+                        .createdAt(LocalDateTime.now())
+                        .build();
 
-            AuditLog logEntry = AuditLog.builder()
-                    .actorId(null) // unknown until authenticated
-                    .action(action)
-                    .entity("PasswordReset")
-                    .entityId(null)
-                    .metadataJson(json)
-                    .createdAt(LocalDateTime.now())
-                    .build();
+                auditLogRepository.save(logEntry);
+                log.info("[AUDIT ✅] PasswordReset | action={} | ip={}", action, ip);
+            } catch (Exception e) {
+                log.error("[AUDIT ERROR] Failed password reset log: {}", e.getMessage());
+            }
+        });
+    }
 
-            auditLogRepository.save(logEntry);
-            log.info("[AUDIT] PasswordReset | action={} | ip={}", action, ip);
+    // ------------------ Testimonial Logs ------------------
+    @Override
+    public void logTestimonial(Long actorId, String action, Long testimonialId, Map<String, Object> metadata) {
+        logEntity("Testimonial", actorId, action, testimonialId, metadata);
+    }
 
-        } catch (Exception e) {
-            log.error("[AUDIT ERROR] Failed password reset log: {}", e.getMessage());
-        }
+    // ------------------ Comment Logs ------------------
+    @Override
+    public void logComment(Long actorId, String action, Long commentId, Map<String, Object> metadata) {
+        logEntity("TestimonialComment", actorId, action, commentId, metadata);
+    }
+
+    // ------------------ Like Logs ------------------
+    @Override
+    public void logLike(Long actorId, String action, Long likeId, Map<String, Object> metadata) {
+        logEntity("TestimonialLike", actorId, action, likeId, metadata);
+    }
+
+    // ------------------ System Logs ------------------
+    @Override
+    public void logSystem(String action, Map<String, Object> metadata) {
+        auditExecutor.submit(() -> {
+            try {
+                String json = objectMapper.writeValueAsString(metadata != null ? metadata : Map.of());
+                AuditLog logEntry = AuditLog.builder()
+                        .action(action)
+                        .entity("System")
+                        .metadataJson(json)
+                        .createdAt(LocalDateTime.now())
+                        .build();
+
+                auditLogRepository.save(logEntry);
+                log.debug("[AUDIT ✅] System | action={} | metadata={}", action, json);
+            } catch (Exception e) {
+                log.error("[AUDIT ERROR] Failed system log '{}': {}", action, e.getMessage());
+            }
+        });
+    }
+
+    // ------------------ Contact Message Logs ------------------
+    @Override
+    public void logContactMessage(String entityName, Long entityId, String action, Map<String, Object> metadata) {
+        auditExecutor.submit(() -> {
+            try {
+                String json = objectMapper.writeValueAsString(metadata != null ? metadata : Map.of());
+                AuditLog auditLog = AuditLog.builder()
+                        .entity(entityName)
+                        .action(action)
+                        .entityId(entityId)
+                        .metadataJson(json)
+                        .createdAt(LocalDateTime.now())
+                        .build();
+
+                auditLogRepository.save(auditLog);
+                log.debug("[AUDIT ✅] Contact | action={} | entityId={}", action, entityId);
+            } catch (Exception e) {
+                log.error("[AUDIT ERROR] Failed contact message log: {}", e.getMessage(), e);
+            }
+        });
     }
 
     // ------------------ Private Helper ------------------
     private void logEntity(String entityName, Long actorId, String action, Long entityId, Map<String, Object> metadata) {
-        try {
-            String json = objectMapper.writeValueAsString(metadata != null ? metadata : Map.of());
-            logAction(actorId, action, entityName, entityId, json);
-        } catch (Exception e) {
-            log.error("[AUDIT ERROR] Failed {} log {}: {}", entityName, action, e.getMessage());
-        }
+        auditExecutor.submit(() -> {
+            try {
+                String json = objectMapper.writeValueAsString(metadata != null ? metadata : Map.of());
+                logAction(actorId, action, entityName, entityId, json);
+            } catch (Exception e) {
+                log.error("[AUDIT ERROR] Failed {} log {}: {}", entityName, action, e.getMessage());
+            }
+        });
     }
 
     private String getClientIp(HttpServletRequest request) {
         if (request == null) return "UNKNOWN";
         String ip = request.getHeader("X-Forwarded-For");
-        if (ip == null || ip.isBlank()) {
-            ip = request.getRemoteAddr();
-        }
+        if (ip == null || ip.isBlank()) ip = request.getRemoteAddr();
         return ip;
     }
 }

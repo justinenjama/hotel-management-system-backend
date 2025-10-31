@@ -30,4 +30,15 @@ public interface AuditLogService {
 
     void logPasswordResetAction(HttpServletRequest request, String action, String description);
 
+    void logTestimonial(Long actorId, String action, Long testimonialId, Map<String, Object> metadata);
+
+    void logComment(Long actorId, String action, Long commentId, Map<String, Object> metadata);
+
+    void logLike(Long actorId, String action, Long likeId, Map<String, Object> metadata);
+
+    void logSystem(String action, Map<String, Object> metadata);
+
+    void logContactMessage(String entityName, Long entityId, String action, Map<String, Object> metadata);
+
+
 }

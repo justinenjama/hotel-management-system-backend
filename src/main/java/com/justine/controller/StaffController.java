@@ -22,35 +22,41 @@ public class StaffController {
 
     @PostMapping
     public ResponseEntity<StaffResponseDTO> addStaff(@RequestBody StaffRequestDTO dto, Principal principal) {
-        return staffService.addStaff(dto, principal.getName());
+        Long currentUserId = Long.parseLong(principal.getName());
+        return staffService.addStaff(dto, currentUserId);
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<StaffResponseDTO> updateStaff(@PathVariable Long id,
                                                         @RequestBody StaffRequestDTO dto,
                                                         Principal principal) {
-        return staffService.updateStaff(id, dto, principal.getName());
+        Long currentUserId = Long.parseLong(principal.getName());
+        return staffService.updateStaff(id, dto, currentUserId);
     }
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteStaff(@PathVariable Long id, Principal principal) {
-        return staffService.deleteStaff(id, principal.getName());
+        Long currentUserId = Long.parseLong(principal.getName());
+        return staffService.deleteStaff(id, currentUserId);
     }
 
     @PutMapping("/{id}/assign-hotel/{hotelId}")
     public ResponseEntity<StaffResponseDTO> assignStaffToHotel(@PathVariable Long id,
                                                                @PathVariable Long hotelId,
                                                                Principal principal) {
-        return staffService.assignStaffToHotel(id, hotelId, principal.getName());
+        Long currentUserId = Long.parseLong(principal.getName());
+        return staffService.assignStaffToHotel(id, hotelId, currentUserId);
     }
 
     @GetMapping("/{id}")
     public ResponseEntity<StaffResponseDTO> getStaffById(@PathVariable Long id, Principal principal) {
-        return staffService.getStaffById(id, principal.getName());
+        Long currentUserId = Long.parseLong(principal.getName());
+        return staffService.getStaffById(id, currentUserId);
     }
 
     @GetMapping
     public ResponseEntity<List<StaffResponseDTO>> getAllStaff(Principal principal) {
-        return staffService.getAllStaff(principal.getName());
+        Long currentUserId = Long.parseLong(principal.getName());
+        return staffService.getAllStaff(currentUserId);
     }
 }

@@ -1,8 +1,11 @@
 package com.justine.model;
 
 import com.justine.enums.OrderStatus;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
+
+import java.util.ArrayList;
 import java.util.List;
 
 @Entity
@@ -22,10 +25,21 @@ public class RestaurantOrder {
 
     private Double totalAmount;
 
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "guest_id")
+    @JsonIgnoreProperties({"orders", "hotel", "rooms"})
     private Guest guest;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "hotel_id")
+    @JsonIgnoreProperties({"restaurants", "rooms", "staff"})
+    private Hotel hotel;
+
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<OrderItem> orderItems;
+    @JsonIgnoreProperties({"order"})
+    private List<OrderItem> orderItems = new ArrayList<>();
+
+    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonIgnoreProperties({"order"})
+    private List<OrderStatusHistory> history = new ArrayList<>();
 }

@@ -19,5 +19,6 @@ public class RestaurantOrderDTO {
     private LocalDateTime orderDate;
     private Double totalAmount;
     private Guest guest;
-    private List<OrderItem> orderItems;
+    private Long hotelId;
+    private List<OrderItemRequestDTO> orderItems;
 }

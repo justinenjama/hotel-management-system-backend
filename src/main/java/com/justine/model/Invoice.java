@@ -2,6 +2,9 @@ package com.justine.model;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
+
+import java.time.LocalDateTime;
 
 @Entity
 @Data
@@ -21,4 +24,10 @@ public class Invoice {
     @OneToOne
     @JoinColumn(name = "booking_id")
     private Booking booking;
+
+    private String invoiceUrlMedium;
+    private String invoiceUrlThumbnail;
+
+    @CreationTimestamp
+    private LocalDateTime generatedAt;
 }

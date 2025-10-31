@@ -10,5 +10,7 @@ import lombok.*;
 public class ServiceResponseDTO {
     private Long id;
     private ServiceType serviceType;
+    private String name;
+    private String description;
     private Double price;
 }
