@@ -30,4 +30,9 @@ public class Payment {
     @OneToOne
     @JoinColumn(name = "booking_id")
     private Booking booking;
+
+    @OneToOne
+    @JoinColumn(name = "restaurant_order_id")
+    private RestaurantOrder restaurantOrder;
+
 }

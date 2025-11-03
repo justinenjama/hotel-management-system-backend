@@ -85,12 +85,6 @@ public class HotelController {
         return ResponseEntity.ok(rooms);
     }
 
-    @GetMapping("/{hotelId}/services")
-    public ResponseEntity<List<ServiceResponseDTO>> getHotelServices(@PathVariable Long hotelId) {
-        List<ServiceResponseDTO> services = hotelService.getHotelServices(hotelId);
-        return ResponseEntity.ok(services);
-    }
-
     @GetMapping("/rooms/{roomId}")
     public ResponseEntity<RoomResponseDTO> getRoomById(@PathVariable Long roomId) {
         RoomResponseDTO room = hotelService.getRoomById(roomId);
@@ -105,5 +99,24 @@ public class HotelController {
     ) {
         List<RoomResponseDTO> availableRooms = hotelService.getAvailableRooms(hotelId, checkIn, checkOut);
         return ResponseEntity.ok(availableRooms);
+    }
+
+    /** ====================== SERVICE ENDPOINTS ====================== */
+
+    // Get all services for a hotel
+    @GetMapping("/{hotelId}/services")
+    public ResponseEntity<List<ServiceResponseDTO>> getServicesForHotel(@PathVariable Long hotelId) {
+        List<ServiceResponseDTO> services = hotelService.getServicesForHotel(hotelId);
+        return ResponseEntity.ok(services);
+    }
+
+    // Add a service to a hotel
+    @PostMapping("/{hotelId}/services/{serviceId}")
+    public ResponseEntity<ServiceResponseDTO> addServiceToHotel(
+            @PathVariable Long hotelId,
+            @PathVariable Long serviceId
+    ) {
+        ServiceResponseDTO service = hotelService.addServiceToHotel(hotelId, serviceId);
+        return ResponseEntity.ok(service);
     }
 }

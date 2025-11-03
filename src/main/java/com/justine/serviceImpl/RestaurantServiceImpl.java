@@ -3,11 +3,14 @@ package com.justine.serviceImpl;
 import com.justine.dtos.request.*;
 import com.justine.dtos.response.*;
 import com.justine.enums.OrderStatus;
+import com.justine.enums.PaymentStatus;
 import com.justine.model.*;
 import com.justine.repository.*;
 import com.justine.service.AuditLogService;
 import com.justine.service.RestaurantService;
 import com.justine.utils.CloudinaryService;
+import com.justine.utils.InvoicePdfGenerator;
+import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -15,6 +18,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -28,6 +32,8 @@ public class RestaurantServiceImpl implements RestaurantService {
     private final FoodItemRepository foodItemRepository;
     private final RestaurantOrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
+    private final PaymentRepository paymentRepository;
+    private final InvoiceRepository invoiceRepository;
     private final AuditLogService auditLogService;
     private final StaffRepository staffRepository;
     private final HotelRepository hotelRepository;
@@ -152,7 +158,8 @@ public class RestaurantServiceImpl implements RestaurantService {
     @Override
     public ResponseEntity<RestaurantOrderResponseDTO> createOrder(RestaurantOrderDTO dto, Long currentUserId) {
         try {
-            Guest guest = guestRepository.findById(currentUserId).orElseThrow();
+            Guest guest = guestRepository.findById(currentUserId)
+                    .orElseThrow(() -> new RuntimeException("Guest not found"));
             Hotel hotel = hotelRepository.findById(dto.getHotelId())
                     .orElseThrow(() -> new RuntimeException("Hotel not found"));
 
@@ -161,10 +168,10 @@ public class RestaurantServiceImpl implements RestaurantService {
                     .status(OrderStatus.PENDING)
                     .guest(guest)
                     .hotel(hotel)
-                    .totalAmount(dto.getTotalAmount())
                     .build();
             orderRepository.save(order);
 
+            // Save order items
             List<OrderItem> items = dto.getOrderItems().stream().map(i -> {
                 FoodItem foodItem = foodItemRepository.findById(i.getFoodItemId())
                         .orElseThrow(() -> new RuntimeException("Food item not found"));
@@ -182,18 +189,166 @@ public class RestaurantServiceImpl implements RestaurantService {
             }).collect(Collectors.toList());
 
             order.setOrderItems(items);
+
+            // Calculate total amount from items
+            double totalAmount = items.stream()
+                    .mapToDouble(it -> (it.getFoodItem().getPrice() != null ? it.getFoodItem().getPrice() : 0) * it.getQuantity())
+                    .sum();
+            order.setTotalAmount(totalAmount);
+            orderRepository.save(order);
+
+            // ------------------- Generate Invoice -------------------
+            Invoice invoice = Invoice.builder()
+                    .invoiceNumber("INV-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase())
+                    .issuedDate(LocalDateTime.now().toLocalDate())
+                    .totalAmount(totalAmount)
+                    .paid(false)
+                    .order(order)  // link to order
+                    .build();
+            invoiceRepository.save(invoice);
+
+            // Generate PDF & upload
+            generateAndUploadInvoicePdf(invoice);
+
+            order.setInvoice(invoice);
             orderRepository.save(order);
 
             auditLogService.logRestaurant(currentUserId, "CREATE_ORDER_SUCCESS", order.getId(), Map.of(
-                    "totalAmount", dto.getTotalAmount(),
+                    "totalAmount", totalAmount,
                     "itemCount", items.size(),
-                    "hotelId", hotel.getId()
+                    "hotelId", hotel.getId(),
+                    "invoiceNumber", invoice.getInvoiceNumber()
             ));
+
             return ResponseEntity.status(HttpStatus.CREATED).body(toOrderResponse(order));
+
         } catch (Exception e) {
             auditLogService.logRestaurant(currentUserId, "CREATE_ORDER_ERROR", null, Map.of("error", e.getMessage()));
-            log.error("Error creating order: {}", e.getMessage());
+            log.error("Error creating order: {}", e.getMessage(), e);
             return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    // ------------------ Make Restaurant Order Payment ------------------
+    @Override
+    @Transactional
+    public ResponseEntity<PaymentResponseDTO> makeRestaurantOrderPayment(PaymentRequestDTO dto, Long currentUserId) {
+        try {
+            // 1️⃣ Fetch order
+            RestaurantOrder order = orderRepository.findById(dto.getRestaurantOrderId())
+                    .orElseThrow(() -> new RuntimeException("Restaurant order not found"));
+
+            // 2️⃣ Prevent paying again if already paid
+            Invoice invoice = order.getInvoice();
+            if (invoice != null && invoice.isPaid()) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
+            }
+
+            double totalAmount = order.getTotalAmount() != null ? order.getTotalAmount() : 0.0;
+
+            // 3️⃣ Create or update payment
+            Payment payment = order.getPayment() != null ? order.getPayment() : new Payment();
+            payment.setRestaurantOrder(order);
+            payment.setAmount(totalAmount);
+            payment.setMethod(dto.getMethod());
+            payment.setTransactionId(dto.getTransactionId());
+            payment.setPaymentDate(LocalDateTime.now());
+            payment.setStatus(PaymentStatus.PAID);
+            paymentRepository.save(payment);
+
+            order.setPayment(payment);
+            order.setStatus(OrderStatus.SERVED);
+
+            // 4️⃣ Create or update invoice
+            if (invoice == null) {
+                invoice = Invoice.builder()
+                        .invoiceNumber("INV-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase())
+                        .issuedDate(LocalDate.now())
+                        .totalAmount(totalAmount)
+                        .paid(true)
+                        .order(order)
+                        .build();
+            } else {
+                // Delete old PDF from Cloudinary before replacing
+                if (invoice.getInvoiceUrl() != null) {
+                    cloudinaryService.deleteFile(cloudinaryService.extractPublicIdFromUrl(invoice.getInvoiceUrl()));
+                }
+                invoice.setPaid(true);
+                invoice.setTotalAmount(totalAmount);
+                invoice.setIssuedDate(LocalDate.now());
+            }
+            invoiceRepository.save(invoice);
+
+            // 5️⃣ Generate and upload new PDF
+            generateAndUploadInvoicePdf(invoice);
+
+            order.setInvoice(invoice);
+            orderRepository.save(order);
+
+            // 6️⃣ Audit log
+            auditLogService.logRestaurant(
+                    order.getGuest().getId(),
+                    "MAKE_PAYMENT_SUCCESS",
+                    order.getId(),
+                    Map.of("amount", totalAmount, "transactionId", dto.getTransactionId())
+            );
+
+            return ResponseEntity.ok(toPaymentResponse(payment));
+
+        } catch (Exception e) {
+            log.error("Restaurant order payment error", e);
+            auditLogService.logRestaurant(
+                    null,
+                    "MAKE_PAYMENT_ERROR",
+                    dto.getRestaurantOrderId(),
+                    Map.of("error", e.getMessage())
+            );
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+
+    // ----------------- Manual Generate Invoice (Optional) -----------------
+    @Override
+    public ResponseEntity<InvoiceResponseDTO> generateOrderInvoice(Long orderId, Long currentUserId) {
+        try {
+            if (!isAdmin(currentUserId)) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+
+            RestaurantOrder order = orderRepository.findById(orderId)
+                    .orElseThrow(() -> new RuntimeException("Order not found"));
+
+            Invoice invoice = order.getInvoice();
+            if (invoice != null) return ResponseEntity.ok(toInvoiceResponse(invoice));
+
+            double totalAmount = order.getOrderItems().stream()
+                    .mapToDouble(it -> (it.getFoodItem().getPrice() != null ? it.getFoodItem().getPrice() : 0) * it.getQuantity())
+                    .sum();
+
+            invoice = Invoice.builder()
+                    .invoiceNumber("INV-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase())
+                    .issuedDate(LocalDateTime.now().toLocalDate())
+                    .totalAmount(totalAmount)
+                    .paid(false)
+                    .order(order)
+                    .build();
+            invoiceRepository.save(invoice);
+
+            generateAndUploadInvoicePdf(invoice);
+
+            order.setInvoice(invoice);
+            orderRepository.save(order);
+
+            auditLogService.logRestaurant(currentUserId, "GENERATE_ORDER_INVOICE_SUCCESS", order.getId(), Map.of(
+                    "invoiceNumber", invoice.getInvoiceNumber(),
+                    "totalAmount", totalAmount
+            ));
+
+            return ResponseEntity.ok(toInvoiceResponse(invoice));
+
+        } catch (Exception e) {
+            auditLogService.logRestaurant(currentUserId, "GENERATE_ORDER_INVOICE_ERROR", orderId, Map.of("error", e.getMessage()));
+            log.error("Error generating order invoice: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
 
@@ -295,6 +450,21 @@ public class RestaurantServiceImpl implements RestaurantService {
             return ResponseEntity.internalServerError().build();
         }
     }
+
+    // ------------------ Helper: PDF & Cloud Upload ------------------
+    private void generateAndUploadInvoicePdf(Invoice invoice) {
+        try {
+            MultipartFile pdfFile = InvoicePdfGenerator.generateReceipt(invoice);
+            Map<String, String> urls = cloudinaryService.uploadFileWithEagerSizes(pdfFile, "hotel_invoices");
+            invoice.setInvoiceUrl(urls.get("large"));
+            invoice.setInvoiceUrlMedium(urls.get("medium"));
+            invoice.setInvoiceUrlThumbnail(urls.get("thumbnail"));
+            invoiceRepository.save(invoice);
+        } catch (Exception e) {
+            log.error("Invoice PDF generation/upload failed for invoice {}: {}", invoice.getId(), e.getMessage(), e);
+        }
+    }
+
     // ============ MAPPERS ============
     private FoodItemResponseDTO toFoodItemResponse(FoodItem item) {
         return FoodItemResponseDTO.builder()
@@ -338,6 +508,32 @@ public class RestaurantServiceImpl implements RestaurantService {
                 .idNumber(guest.getIdNumber())
                 .role(guest.getRole())
                 .gender(guest.getGender())
+                .build();
+    }
+
+    private InvoiceResponseDTO toInvoiceResponse(Invoice invoice) {
+        if (invoice == null) return null;
+        return InvoiceResponseDTO.builder()
+                .id(invoice.getId())
+                .invoiceNumber(invoice.getInvoiceNumber())
+                .issuedDate(invoice.getIssuedDate())
+                .totalAmount(invoice.getTotalAmount())
+                .paid(invoice.isPaid())
+                .invoiceUrl(invoice.getInvoiceUrl())
+                .invoiceUrlMedium(invoice.getInvoiceUrlMedium())
+                .invoiceUrlThumbnail(invoice.getInvoiceUrlThumbnail())
+                .generatedAt(invoice.getGeneratedAt())
+                .build();
+    }
+
+    private PaymentResponseDTO toPaymentResponse(Payment payment) {
+        return PaymentResponseDTO.builder()
+                .id(payment.getId())
+                .amount(payment.getAmount())
+                .method(payment.getMethod())
+                .status(payment.getStatus())
+                .transactionId(payment.getTransactionId())
+                .paymentDate(payment.getPaymentDate())
                 .build();
     }
 }

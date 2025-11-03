@@ -1,8 +1,11 @@
 package com.justine.service;
 
 import com.justine.dtos.request.FoodItemRequestDTO;
+import com.justine.dtos.request.PaymentRequestDTO;
 import com.justine.dtos.request.RestaurantOrderDTO;
 import com.justine.dtos.response.FoodItemResponseDTO;
+import com.justine.dtos.response.InvoiceResponseDTO;
+import com.justine.dtos.response.PaymentResponseDTO;
 import com.justine.dtos.response.RestaurantOrderResponseDTO;
 import org.springframework.http.ResponseEntity;
 
@@ -23,6 +26,11 @@ public interface RestaurantService {
 
     // --- ORDERS ---
     ResponseEntity<RestaurantOrderResponseDTO> createOrder(RestaurantOrderDTO dto, Long currentUserId);
+
+    // --- PAYMENTS & INVOICES ---
+    ResponseEntity<PaymentResponseDTO> makeRestaurantOrderPayment(PaymentRequestDTO dto, Long currentUserId);
+
+    ResponseEntity<InvoiceResponseDTO> generateOrderInvoice(Long orderId, Long currentUserId);
     ResponseEntity<RestaurantOrderResponseDTO> getOrderById(Long orderId, Long currentUserId);
     ResponseEntity<List<RestaurantOrderResponseDTO>> getOrdersByGuest(Long guestId, Long currentUserId);
 

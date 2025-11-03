@@ -5,6 +5,8 @@ import com.justine.dtos.request.RoomRequestDTO;
 import com.justine.dtos.response.HotelResponseDTO;
 import com.justine.dtos.response.RoomResponseDTO;
 import com.justine.dtos.response.ServiceResponseDTO;
+import jakarta.transaction.Transactional;
+import org.springframework.http.ResponseEntity;
 
 import java.util.List;
 
@@ -23,7 +25,8 @@ public interface HotelService {
 
     List<RoomResponseDTO> getRoomsByHotel(Long hotelId);
 
-    List<ServiceResponseDTO> getHotelServices(Long hotelId);
+    List<ServiceResponseDTO> getServicesForHotel(Long hotelId);
+    ServiceResponseDTO addServiceToHotel(Long hotelId, Long serviceId);
 
     RoomResponseDTO getRoomById(Long roomId);
 

@@ -1,9 +1,12 @@
 package com.justine.serviceImpl;
 
 import com.justine.dtos.request.BookingRequestDTO;
+import com.justine.dtos.request.OrderItemRequestDTO;
 import com.justine.dtos.request.PaymentRequestDTO;
+import com.justine.dtos.request.RestaurantOrderRequestDTO;
 import com.justine.dtos.response.*;
 import com.justine.enums.BookingStatus;
+import com.justine.enums.OrderStatus;
 import com.justine.enums.PaymentStatus;
 import com.justine.model.*;
 import com.justine.repository.*;
@@ -12,7 +15,6 @@ import com.justine.service.BookingService;
 import com.justine.utils.CloudinaryService;
 import com.justine.utils.InvoicePdfGenerator;
 import jakarta.transaction.Transactional;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -32,6 +34,9 @@ import java.util.stream.Collectors;
 public class BookingServiceImpl implements BookingService {
 
     private final BookingRepository bookingRepository;
+    private final FoodItemRepository foodItemRepository;
+    private final RestaurantOrderRepository restaurantOrderRepository;
+    private final OrderItemRepository orderItemRepository;
     private final RoomRepository roomRepository;
     private final GuestRepository guestRepository;
     private final ServiceRepository serviceRepository;
@@ -41,8 +46,11 @@ public class BookingServiceImpl implements BookingService {
     private final AuditLogService auditLogService;
     private final StaffRepository staffRepository;
 
-    public BookingServiceImpl(BookingRepository bookingRepository, RoomRepository roomRepository, GuestRepository guestRepository, ServiceRepository serviceRepository, InvoiceRepository invoiceRepository, PaymentRepository paymentRepository, CloudinaryService cloudinaryService, AuditLogService auditLogService, StaffRepository staffRepository) {
+    public BookingServiceImpl(BookingRepository bookingRepository, FoodItemRepository foodItemRepository, RestaurantOrderRepository restaurantOrderRepository, OrderItemRepository orderItemRepository, RoomRepository roomRepository, GuestRepository guestRepository, ServiceRepository serviceRepository, InvoiceRepository invoiceRepository, PaymentRepository paymentRepository, CloudinaryService cloudinaryService, AuditLogService auditLogService, StaffRepository staffRepository) {
         this.bookingRepository = bookingRepository;
+        this.foodItemRepository = foodItemRepository;
+        this.restaurantOrderRepository = restaurantOrderRepository;
+        this.orderItemRepository = orderItemRepository;
         this.roomRepository = roomRepository;
         this.guestRepository = guestRepository;
         this.serviceRepository = serviceRepository;
@@ -174,7 +182,7 @@ public class BookingServiceImpl implements BookingService {
         }
     }
 
-    // ------------------ Make Payment ------------------
+    // ------------------ Make Booking Payment ------------------
     @Override
     @Transactional
     public ResponseEntity<PaymentResponseDTO> makePayment(PaymentRequestDTO dto, Long currentUserId) {
@@ -191,14 +199,9 @@ public class BookingServiceImpl implements BookingService {
             // 3️⃣ Calculate total cost
             long nights = ChronoUnit.DAYS.between(booking.getCheckInDate(), booking.getCheckOutDate());
             double roomCost = booking.getRoom().getPricePerNight() * nights;
-
-            double serviceCost = 0.0;
-            if (booking.getServices() != null && !booking.getServices().isEmpty()) {
-                serviceCost = booking.getServices().stream()
-                        .mapToDouble(s -> s.getPrice() != null ? s.getPrice() : 0.0)
-                        .sum();
-            }
-
+            double serviceCost = booking.getServices() != null
+                    ? booking.getServices().stream().mapToDouble(s -> s.getPrice() != null ? s.getPrice() : 0.0).sum()
+                    : 0.0;
             double totalCost = roomCost + serviceCost;
 
             // 4️⃣ Create or update payment
@@ -210,6 +213,7 @@ public class BookingServiceImpl implements BookingService {
             payment.setPaymentDate(LocalDateTime.now());
             payment.setStatus(PaymentStatus.PAID);
             paymentRepository.save(payment);
+
             booking.setPayment(payment);
             booking.setStatus(BookingStatus.CHECKED_IN);
 
@@ -224,13 +228,17 @@ public class BookingServiceImpl implements BookingService {
                         .booking(booking)
                         .build();
             } else {
+                // Delete old PDF from Cloudinary before replacing
+                if (invoice.getInvoiceUrl() != null) {
+                    cloudinaryService.deleteFile(cloudinaryService.extractPublicIdFromUrl(invoice.getInvoiceUrl()));
+                }
                 invoice.setPaid(true);
                 invoice.setTotalAmount(totalCost);
                 invoice.setIssuedDate(LocalDate.now());
             }
             invoiceRepository.save(invoice);
 
-            // 6️⃣ Generate and upload PDF
+            // 6️⃣ Generate and upload new PDF
             generateAndUploadInvoicePdf(invoice);
 
             booking.setInvoice(invoice);
@@ -244,11 +252,10 @@ public class BookingServiceImpl implements BookingService {
                     Map.of("amount", totalCost, "transactionId", dto.getTransactionId())
             );
 
-            // 8️⃣ Return response
             return ResponseEntity.ok(toPaymentResponse(payment));
 
         } catch (Exception e) {
-            log.error("Payment error", e);
+            log.error("Booking payment error", e);
             auditLogService.logBooking(
                     null,
                     "MAKE_PAYMENT_ERROR",
@@ -258,7 +265,6 @@ public class BookingServiceImpl implements BookingService {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
-
 
     // ------------------ Generate Invoice ------------------
     @Override
@@ -379,17 +385,61 @@ public class BookingServiceImpl implements BookingService {
     // ------------------ Add Services to Booking ------------------
     @Override
     @Transactional
-    public ResponseEntity<BookingResponseDTO> addServicesToBooking(Long bookingId, List<Long> serviceIds, Long currentUserId) {
+    public ResponseEntity<BookingResponseDTO> addServicesToBooking(
+            Long bookingId,
+            List<Long> serviceIds,
+            Long currentUserId) {
+
         try {
             Booking booking = bookingRepository.findById(bookingId)
                     .orElseThrow(() -> new RuntimeException("Booking not found"));
 
+            // Permission validation
             if (!isAdmin() && (currentUserId == null || !currentUserId.equals(booking.getGuest().getId()))) {
+                auditLogService.logBooking(
+                        currentUserId,
+                        "ADD_SERVICES_FORBIDDEN",
+                        bookingId,
+                        Map.of("attemptedUser", currentUserId)
+                );
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
             }
 
             List<com.justine.model.Service> services = serviceRepository.findAllById(serviceIds);
-            if (booking.getServices() == null) booking.setServices(new ArrayList<>());
+
+            if (services.isEmpty()) {
+                auditLogService.logBooking(
+                        currentUserId,
+                        "ADD_SERVICES_NONE_FOUND",
+                        bookingId,
+                        Map.of("requestedServiceIds", serviceIds)
+                );
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                        .body(null);
+            }
+
+            // ✅ Hotel rule enforcement
+            Long bookingHotelId = booking.getRoom().getHotel().getId();
+
+            for (com.justine.model.Service service : services) {
+                Long serviceHotelId = service.getHotel().getId();
+
+                if (!Objects.equals(bookingHotelId, serviceHotelId)) {
+                    auditLogService.logBooking(
+                            currentUserId,
+                            "ADD_SERVICE_WRONG_HOTEL",
+                            bookingId,
+                            Map.of("bookingHotelId", bookingHotelId, "serviceHotelId", serviceHotelId)
+                    );
+
+                    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                            .body(null);
+                }
+            }
+
+            if (booking.getServices() == null)
+                booking.setServices(new ArrayList<>());
+
             booking.getServices().addAll(services);
 
             Booking saved = bookingRepository.save(booking);
@@ -402,10 +452,17 @@ public class BookingServiceImpl implements BookingService {
             );
 
             return ResponseEntity.ok(toBookingResponse(saved));
+
         } catch (Exception e) {
-            log.error("Error adding services: {}", e.getMessage());
-            auditLogService.logBooking(null, "ADD_SERVICES_ERROR", bookingId,
-                    Map.of("error", e.getMessage(), "serviceIds", serviceIds));
+            log.error("Error adding services to booking {}: {}", bookingId, e.getMessage(), e);
+
+            auditLogService.logBooking(
+                    currentUserId,
+                    "ADD_SERVICES_ERROR",
+                    bookingId,
+                    Map.of("error", e.getMessage(), "requestedServiceIds", serviceIds)
+            );
+
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
@@ -637,13 +694,15 @@ public class BookingServiceImpl implements BookingService {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
             }
 
-            List<BookingResponseDTO> bookings = bookingRepository.findAll().stream()
+            List<Booking> bookings = bookingRepository.findAllWithPayment();
+
+            List<BookingResponseDTO> bookingsDTO = bookings.stream()
                     .map(this::toBookingResponse)
                     .collect(Collectors.toList());
 
-            return ResponseEntity.ok(bookings);
+            return ResponseEntity.ok(bookingsDTO);
         } catch (Exception e) {
-            log.error("Error getting all bookings: {}", e.getMessage());
+            log.error("Error getting all bookings: {}", e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
@@ -697,9 +756,216 @@ public class BookingServiceImpl implements BookingService {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Collections.emptyList());
         }
     }
+    @Override
+    public ResponseEntity<List<RestaurantOrderResponseDTO>> getOrdersForBooking(Long bookingId, Long currentUserId) {
+        try {
+            Booking booking = bookingRepository.findById(bookingId)
+                    .orElseThrow(() -> new RuntimeException("Booking not found"));
+
+            if (!isAdmin() && (currentUserId == null || !currentUserId.equals(booking.getGuest().getId()))) {
+                auditLogService.logBooking(currentUserId, "VIEW_ORDERS_FOR_BOOKING_FORBIDDEN", bookingId, null);
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+            }
+
+            List<RestaurantOrderResponseDTO> orders = booking.getOrders().stream()
+                    .map(this::toRestaurantOrderResponseDTO)
+                    .toList();
+
+            auditLogService.logBooking(booking.getGuest().getId(), "VIEW_ORDERS_FOR_BOOKING_SUCCESS", bookingId,
+                    Map.of("orderCount", orders.size()));
+
+            return ResponseEntity.ok(orders);
+
+        } catch (Exception e) {
+            log.error("Error fetching restaurant orders for booking {}: {}", bookingId, e.getMessage(), e);
+            auditLogService.logBooking(currentUserId, "VIEW_ORDERS_FOR_BOOKING_ERROR", bookingId,
+                    Map.of("error", e.getMessage()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    @Override
+    @Transactional
+    public ResponseEntity<RestaurantOrderResponseDTO> addItemToCart(
+            Long bookingId, OrderItemRequestDTO itemDto, Long currentUserId) {
+
+        Booking booking = bookingRepository.findById(bookingId)
+                .orElseThrow(() -> new RuntimeException("Booking not found"));
+
+        RestaurantOrder cart = getOrCreateCart(booking);
+
+        FoodItem foodItem = foodItemRepository.findById(itemDto.getFoodItemId())
+                .orElseThrow(() -> new RuntimeException("Food item not found"));
+
+        OrderItem item = new OrderItem();
+        item.setFoodItem(foodItem);
+        item.setQuantity(itemDto.getQuantity());
+        item.setOrder(cart);
+
+        cart.getOrderItems().add(item);
+        cart.setTotalAmount(cart.getOrderItems().stream()
+                .mapToDouble(i -> i.getFoodItem().getPrice() * i.getQuantity())
+                .sum());
+
+        bookingRepository.save(booking);
+
+        return ResponseEntity.ok(toRestaurantOrderResponseDTO(cart));
+    }
+
+    @Override
+    @Transactional
+    public ResponseEntity<RestaurantOrderResponseDTO> confirmCart(Long orderId) {
+        RestaurantOrder cart = restaurantOrderRepository.findById(orderId)
+                .orElseThrow(() -> new RuntimeException("Cart not found"));
+
+        cart.setCart(false);
+        cart.setStatus(OrderStatus.CONFIRMED);
+
+        Booking booking = cart.getBooking();
+        Invoice invoice = booking.getInvoice();
+
+        double newTotal = cart.getTotalAmount();
+        invoice.setTotalAmount(invoice.getTotalAmount() + newTotal);
+
+        restaurantOrderRepository.save(cart);
+        invoiceRepository.save(invoice);
+
+        // ✅ optional generate new invoice PDF here
+
+        return ResponseEntity.ok(toRestaurantOrderResponseDTO(cart));
+    }
+
+    @Override
+    @Transactional
+    public ResponseEntity<RestaurantOrderResponseDTO> removeItem(Long orderItemId) {
+        OrderItem item = orderItemRepository.findById(orderItemId)
+                .orElseThrow(() -> new RuntimeException("Item not found"));
+
+        RestaurantOrder cart = item.getOrder();
+        cart.getOrderItems().remove(item);
+
+        orderItemRepository.delete(item);
+
+        cart.setTotalAmount(cart.getOrderItems().stream()
+                .mapToDouble(i -> i.getFoodItem().getPrice() * i.getQuantity())
+                .sum());
+
+        restaurantOrderRepository.save(cart);
+
+        return ResponseEntity.ok(toRestaurantOrderResponseDTO(cart));
+    }
+
+    @Override
+    @Transactional
+    public ResponseEntity<BookingResponseDTO> addOrderToBooking(
+            Long bookingId,
+            RestaurantOrderRequestDTO request,
+            Long currentUserId) {
+        try {
+            Booking booking = bookingRepository.findById(bookingId)
+                    .orElseThrow(() -> new RuntimeException("Booking not found"));
+
+            if (!isAdmin() && (currentUserId == null || !currentUserId.equals(booking.getGuest().getId()))) {
+                auditLogService.logBooking(
+                        currentUserId,
+                        "ADD_ORDER_FORBIDDEN",
+                        bookingId,
+                        Map.of("guestId", request.getGuestId()));
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+            }
+
+            List<OrderItemRequestDTO> itemsRequested = request.getOrderItems();
+            if (itemsRequested == null || itemsRequested.isEmpty()) {
+                return ResponseEntity.badRequest().body(null);
+            }
+
+            RestaurantOrder order = new RestaurantOrder();
+            order.setBooking(booking);
+            order.setGuest(booking.getGuest());
+            order.setHotel(booking.getRoom().getHotel());
+            order.setOrderDate(LocalDateTime.now());
+            order.setStatus(OrderStatus.PENDING);
+
+            List<OrderItem> orderItems = new ArrayList<>();
+            double total = 0.0;
+            Long bookingHotelId = booking.getRoom().getHotel().getId();
+
+            for (OrderItemRequestDTO itemReq : itemsRequested) {
+                FoodItem foodItem = foodItemRepository.findById(itemReq.getFoodItemId())
+                        .orElseThrow(() -> new RuntimeException("Food item not found"));
+
+                Long foodHotelId = foodItem.getHotel().getId();
+                if (!Objects.equals(bookingHotelId, foodHotelId)) {
+                    auditLogService.logBooking(currentUserId,
+                            "ADD_ORDER_WRONG_HOTEL",
+                            bookingId,
+                            Map.of("invalidFoodHotelId", foodHotelId,
+                                    "requiredHotelId", bookingHotelId));
+                    return ResponseEntity.badRequest().body(null);
+                }
+
+                double itemCost = foodItem.getPrice() * itemReq.getQuantity();
+                total += itemCost;
+
+                orderItems.add(OrderItem.builder()
+                        .order(order)
+                        .foodItem(foodItem)
+                        .quantity(itemReq.getQuantity())
+                        .build());
+            }
+
+            order.setOrderItems(orderItems);
+            order.setTotalAmount(total);
+
+            // ✅ Invoice management
+            Invoice invoice = booking.getInvoice();
+            if (invoice == null) {
+                invoice = Invoice.builder()
+                        .booking(booking)
+                        .totalAmount(total)
+                        .build();
+                booking.setInvoice(invoice);
+            } else {
+                invoice.setTotalAmount(invoice.getTotalAmount() + total);
+            }
+
+            booking.getOrders().add(order);
+
+            bookingRepository.save(booking);
+
+            auditLogService.logBooking(
+                    currentUserId,
+                    "ADD_RESTAURANT_ORDER_SUCCESS",
+                    bookingId,
+                    Map.of("itemsCount", orderItems.size(), "total", total)
+            );
+
+            return ResponseEntity.ok(toBookingResponse(booking));
+
+        } catch (Exception e) {
+            log.error("Error adding restaurant order to booking {}: {}", bookingId, e.getMessage(), e);
+            auditLogService.logBooking(
+                    currentUserId,
+                    "ADD_RESTAURANT_ORDER_ERROR",
+                    bookingId,
+                    Map.of("error", e.getMessage())
+            );
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
 
     // ------------------ Mapping Helpers ------------------
     private BookingResponseDTO toBookingResponse(Booking booking) {
+        // Find the cart (if any)
+        RestaurantOrderResponseDTO cart = booking.getOrders() != null
+                ? booking.getOrders().stream()
+                .filter(o -> o.getCart() && o.getStatus() == OrderStatus.PENDING)
+                .findFirst()
+                .map(this::toRestaurantOrderResponseDTO)
+                .orElse(null)
+                : null;
+
         return BookingResponseDTO.builder()
                 .id(booking.getId())
                 .bookingCode(booking.getBookingCode())
@@ -713,6 +979,18 @@ public class BookingServiceImpl implements BookingService {
                         ? booking.getServices().stream().map(this::toServiceResponse).toList()
                         : Collections.emptyList())
                 .invoiceExists(booking.getInvoice() != null)
+                // Safely map payment
+                .payment(booking.getPayment() != null
+                        ? PaymentResponseDTO.builder()
+                        .id(booking.getPayment().getId())
+                        .amount(booking.getPayment().getAmount())
+                        .method(booking.getPayment().getMethod())
+                        .status(booking.getPayment().getStatus())
+                        .paymentDate(booking.getPayment().getPaymentDate())
+                        .transactionId(booking.getPayment().getTransactionId())
+                        .build()
+                        : null)
+                .cart(cart)
                 .build();
     }
 
@@ -735,6 +1013,7 @@ public class BookingServiceImpl implements BookingService {
                 .email(guest.getEmail())
                 .phoneNumber(guest.getPhoneNumber())
                 .idNumber(guest.getIdNumber())
+                .gender(guest.getGender())
                 .build();
     }
 
@@ -770,6 +1049,65 @@ public class BookingServiceImpl implements BookingService {
                 .invoiceUrlMedium(invoice.getInvoiceUrlMedium())
                 .invoiceUrlThumbnail(invoice.getInvoiceUrlThumbnail())
                 .generatedAt(invoice.getGeneratedAt())
+                .build();
+    }
+
+    private RestaurantOrder getOrCreateCart(Booking booking) {
+        return booking.getOrders().stream()
+                .filter(o -> o.getCart() && o.getStatus() == OrderStatus.PENDING)
+                .findFirst()
+                .orElseGet(() -> {
+                    RestaurantOrder newCart = RestaurantOrder.builder()
+                            .booking(booking)
+                            .guest(booking.getGuest())
+                            .hotel(booking.getRoom().getHotel())
+                            .orderDate(LocalDateTime.now())
+                            .status(OrderStatus.PENDING)
+                            .cart(true)
+                            .orderItems(new ArrayList<>())
+                            .totalAmount(0.0)
+                            .build();
+
+                    booking.getOrders().add(newCart);
+                    return newCart;
+                });
+    }
+
+    private RestaurantOrderResponseDTO toRestaurantOrderResponseDTO(RestaurantOrder order) {
+        if (order == null) return null;
+
+        return RestaurantOrderResponseDTO.builder()
+                .id(order.getId())
+                .orderDate(order.getOrderDate())
+                .status(order.getStatus())
+                .cart(order.getCart())
+                .totalAmount(order.getTotalAmount())
+                .orderItems(order.getOrderItems() != null
+                        ? order.getOrderItems().stream()
+                        .map(this::toOrderItemResponseDTO)
+                        .toList()
+                        : Collections.emptyList())
+                .build();
+    }
+
+    private OrderItemResponseDTO toOrderItemResponseDTO(OrderItem item) {
+        if (item == null) return null;
+        return OrderItemResponseDTO.builder()
+                .id(item.getId())
+                .quantity(item.getQuantity())
+                .foodItem(toFoodItemResponseDTO(item.getFoodItem()))
+                .build();
+    }
+
+    private FoodItemResponseDTO toFoodItemResponseDTO(FoodItem food) {
+        if (food == null) return null;
+        return FoodItemResponseDTO.builder()
+                .id(food.getId())
+                .itemName(food.getItemName())
+                .price(food.getPrice())
+                .imageUrl(food.getImageUrl())
+                .category(food.getCategory())
+                .hotelId(food.getHotel() != null ? food.getHotel().getId() : null)
                 .build();
     }
 

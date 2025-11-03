@@ -12,4 +12,5 @@ public class PaymentRequestDTO {
     private PaymentMethod method;
     private String transactionId;
     private Long bookingId;
+    private Long restaurantOrderId;
 }

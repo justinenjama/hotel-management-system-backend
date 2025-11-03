@@ -16,5 +16,6 @@ public class RestaurantOrderResponseDTO {
     private Double totalAmount;
     private GuestResponseDTO guest;
     private Long hotelId;
+    private Boolean cart;
     private List<OrderItemResponseDTO> orderItems;
 }

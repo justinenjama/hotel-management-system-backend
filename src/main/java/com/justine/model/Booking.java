@@ -2,6 +2,8 @@ package com.justine.model;
 
 import jakarta.persistence.*;
 import lombok.*;
+
+import java.util.ArrayList;
 import java.util.List;
 
 import com.justine.enums.BookingStatus;
@@ -56,4 +58,8 @@ public class Booking {
             inverseJoinColumns = @JoinColumn(name = "service_id")
     )
     private List<Service> services;
+
+    @OneToMany(mappedBy = "booking", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<RestaurantOrder> orders = new ArrayList<>();
+
 }

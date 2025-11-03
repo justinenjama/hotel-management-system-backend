@@ -22,4 +22,6 @@ public class BookingResponseDTO {
     private InvoiceResponseDTO invoice;
     private List<ServiceResponseDTO> services;
     private boolean invoiceExists;
+    private RestaurantOrderResponseDTO cart;
+    private List<RestaurantOrderResponseDTO> orders;
 }

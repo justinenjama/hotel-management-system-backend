@@ -35,11 +35,24 @@ public class RestaurantOrder {
     @JsonIgnoreProperties({"restaurants", "rooms", "staff"})
     private Hotel hotel;
 
+    @OneToOne(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonIgnoreProperties({"order", "booking"})
+    private Invoice invoice;
+
+    @OneToOne(cascade = CascadeType.ALL)
+    @JoinColumn(name = "payment_id")
+    private Payment payment;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "booking_id")
+    @JsonIgnoreProperties({"orders"})
+    private Booking booking;
+
+    @Column(nullable = false)
+    private Boolean cart = true; // True until confirmed
+
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
     @JsonIgnoreProperties({"order"})
     private List<OrderItem> orderItems = new ArrayList<>();
 
-    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
-    @JsonIgnoreProperties({"order"})
-    private List<OrderStatusHistory> history = new ArrayList<>();
 }

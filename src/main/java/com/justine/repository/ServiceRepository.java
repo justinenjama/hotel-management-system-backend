@@ -11,4 +11,5 @@ public interface ServiceRepository extends JpaRepository<Service, Long> {
     @Query("SELECT s FROM Service s JOIN s.bookings b WHERE b.id = :bookingId")
     List<Service> findAllByBookingId(@Param("bookingId") Long bookingId);
 
+    List<Service> findByHotelId(Long hotelId);
 }

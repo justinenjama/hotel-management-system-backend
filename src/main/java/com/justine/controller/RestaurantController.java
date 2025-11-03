@@ -1,8 +1,11 @@
 package com.justine.controller;
 
 import com.justine.dtos.request.FoodItemRequestDTO;
+import com.justine.dtos.request.PaymentRequestDTO;
 import com.justine.dtos.request.RestaurantOrderDTO;
 import com.justine.dtos.response.FoodItemResponseDTO;
+import com.justine.dtos.response.InvoiceResponseDTO;
+import com.justine.dtos.response.PaymentResponseDTO;
 import com.justine.dtos.response.RestaurantOrderResponseDTO;
 import com.justine.enums.OrderStatus;
 import com.justine.service.RestaurantService;
@@ -62,6 +65,24 @@ public class RestaurantController {
     @PostMapping("/order")
     public ResponseEntity<RestaurantOrderResponseDTO> createOrder(@RequestBody RestaurantOrderDTO dto, Authentication auth) {
         return restaurantService.createOrder(dto, getCurrentUserId(auth));
+    }
+
+    @PostMapping("/order/{orderId}/payment")
+    public ResponseEntity<PaymentResponseDTO> makeRestaurantOrderPayment(
+            @PathVariable Long orderId,
+            @RequestBody PaymentRequestDTO dto,
+            Authentication auth) {
+
+        // set the order ID inside the DTO for service method
+        dto.setRestaurantOrderId(orderId);
+        return restaurantService.makeRestaurantOrderPayment(dto, getCurrentUserId(auth));
+    }
+
+    @GetMapping("/order/{orderId}/invoice")
+    public ResponseEntity<InvoiceResponseDTO> generateOrderInvoice(
+            @PathVariable Long orderId,
+            Authentication auth) {
+        return restaurantService.generateOrderInvoice(orderId, getCurrentUserId(auth));
     }
 
     @GetMapping("/order/{id}")

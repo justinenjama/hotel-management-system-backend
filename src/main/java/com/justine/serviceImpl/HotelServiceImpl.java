@@ -13,12 +13,15 @@ import com.justine.model.Room;
 import com.justine.model.Staff;
 import com.justine.repository.HotelRepository;
 import com.justine.repository.RoomRepository;
+import com.justine.repository.ServiceRepository;
 import com.justine.service.AuditLogService;
 import com.justine.service.HotelService;
 import com.justine.utils.CloudinaryService;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
@@ -32,16 +35,18 @@ import java.util.stream.Collectors;
 public class HotelServiceImpl implements HotelService {
 
     private final HotelRepository hotelRepository;
+    private final ServiceRepository serviceRepository;
     private final RoomRepository roomRepository;
     private final AuditLogService auditLogService;
     private final CloudinaryService cloudinaryService;
 
     public HotelServiceImpl(
-            HotelRepository hotelRepository,
+            HotelRepository hotelRepository, ServiceRepository serviceRepository,
             RoomRepository roomRepository,
             AuditLogService auditLogService,
             CloudinaryService cloudinaryService) {
         this.hotelRepository = hotelRepository;
+        this.serviceRepository = serviceRepository;
         this.roomRepository = roomRepository;
         this.auditLogService = auditLogService;
         this.cloudinaryService = cloudinaryService;
@@ -288,23 +293,67 @@ public class HotelServiceImpl implements HotelService {
     }
 
     @Override
-    public List<ServiceResponseDTO> getHotelServices(Long hotelId) {
-        Hotel hotel = hotelRepository.findById(hotelId)
-                .orElseThrow(() -> new EntityNotFoundException("Hotel not found"));
+    public List<ServiceResponseDTO> getServicesForHotel(Long hotelId) {
+        try {
+            List<com.justine.model.Service> services = serviceRepository.findByHotelId(hotelId);
 
-        if (hotel.getServices() == null || hotel.getServices().isEmpty()) {
-            return Collections.emptyList();
+            List<ServiceResponseDTO> result = services.stream()
+                    .map(this::toServiceResponse)
+                    .toList();
+
+            auditLogService.logHotel(getActorIdFromContext(),
+                    "GET_HOTEL_SERVICES_SUCCESS",
+                    hotelId,
+                    Map.of("serviceCount", result.size()));
+
+            return result;
+
+        } catch (Exception e) {
+            log.error("Error fetching services for hotel {}: {}", hotelId, e.getMessage(), e);
+            auditLogService.logHotel(getActorIdFromContext(),
+                    "GET_HOTEL_SERVICES_ERROR",
+                    hotelId,
+                    Map.of("error", e.getMessage()));
+
+            throw new RuntimeException("Failed to fetch hotel services", e);
         }
-
-        return hotel.getServices().stream()
-                .map(service -> ServiceResponseDTO.builder()
-                        .id(service.getId())
-                        .serviceType(service.getServiceType())
-                        .price(service.getPrice())
-                        .description(service.getDescription())
-                        .build())
-                .collect(Collectors.toList());
     }
+
+    @Override
+    @Transactional
+    public ServiceResponseDTO addServiceToHotel(Long hotelId, Long serviceId) {
+        try {
+            checkAdminAccess();
+            Long actorId = getActorIdFromContext();
+
+            Hotel hotel = hotelRepository.findById(hotelId)
+                    .orElseThrow(() -> new EntityNotFoundException("Hotel not found"));
+
+            com.justine.model.Service service = serviceRepository.findById(serviceId)
+                    .orElseThrow(() -> new EntityNotFoundException("Service not found"));
+
+            service.setHotel(hotel);
+            serviceRepository.save(service);
+
+            auditLogService.logHotel(actorId,
+                    "ADD_SERVICE_TO_HOTEL_SUCCESS",
+                    hotelId,
+                    Map.of("serviceId", serviceId));
+
+            return toServiceResponse(service);
+
+        } catch (Exception e) {
+            log.error("Error adding service {} to hotel {}: {}", serviceId, hotelId, e.getMessage(), e);
+
+            auditLogService.logHotel(getActorIdFromContext(),
+                    "ADD_SERVICE_TO_HOTEL_ERROR",
+                    hotelId,
+                    Map.of("serviceId", serviceId, "error", e.getMessage()));
+
+            throw new RuntimeException("Failed to add service to hotel", e);
+        }
+}
+
 
     @Override
     public RoomResponseDTO getRoomById(Long roomId) {
@@ -330,7 +379,6 @@ public class HotelServiceImpl implements HotelService {
                         if (bookings == null || bookings.isEmpty()) return true;
 
                         return bookings.stream().noneMatch(booking -> {
-                            // Only consider active bookings that block availability
                             if (booking.getStatus() != BookingStatus.BOOKED &&
                                     booking.getStatus() != BookingStatus.CHECKED_IN) {
                                 return false;
@@ -339,17 +387,14 @@ public class HotelServiceImpl implements HotelService {
                             LocalDate bookedCheckIn = booking.getCheckInDate();
                             LocalDate bookedCheckOut = booking.getCheckOutDate();
 
-                            // ✅ Date overlap if NOT (ends before OR starts after)
-                            boolean overlaps = !(checkOutDate.isBefore(bookedCheckIn) ||
+                            return !(checkOutDate.isBefore(bookedCheckIn) ||
                                     checkInDate.isAfter(bookedCheckOut));
-
-                            return overlaps;
                         });
                     })
                     .collect(Collectors.toList());
 
             return availableRooms.stream()
-                    .map(this::mapRoomToResponse)
+                    .map(room -> mapRoomToResponseForDateRange(room, checkInDate, checkOutDate))
                     .collect(Collectors.toList());
 
         } catch (Exception e) {
@@ -358,6 +403,43 @@ public class HotelServiceImpl implements HotelService {
         }
     }
 
+    /**
+     * ✅ Special mapper ONLY for getAvailableRooms()
+     * ✅ Sets availability based on actual date range instead of DB column
+     */
+    private RoomResponseDTO mapRoomToResponseForDateRange(Room room,
+                                                          LocalDate checkIn,
+                                                          LocalDate checkOut) {
+
+        boolean isBookedThisRange =
+                room.getBookings() != null &&
+                        room.getBookings().stream().anyMatch(booking -> {
+                            if (booking.getStatus() != BookingStatus.BOOKED &&
+                                    booking.getStatus() != BookingStatus.CHECKED_IN) {
+                                return false;
+                            }
+
+                            LocalDate bookedCheckIn = booking.getCheckInDate();
+                            LocalDate bookedCheckOut = booking.getCheckOutDate();
+
+                            return !(checkOut.isBefore(bookedCheckIn) ||
+                                    checkIn.isAfter(bookedCheckOut));
+                        });
+
+        return RoomResponseDTO.builder()
+                .id(room.getId())
+                .roomNumber(room.getRoomNumber())
+                .type(room.getType())
+                .pricePerNight(room.getPricePerNight())
+                .available(!isBookedThisRange) // ✅ Corrected availability!
+                .roomImageUrl(room.getRoomImageUrl())
+                .hotel(room.getHotel() != null ? HotelResponseDTO.builder()
+                        .id(room.getHotel().getId())
+                        .name(room.getHotel().getName())
+                        .location(room.getHotel().getLocation())
+                        .build() : null)
+                .build();
+    }
 
     /* ====================== READ METHODS ====================== */
     @Override
@@ -421,5 +503,15 @@ public class HotelServiceImpl implements HotelService {
                         .build() : null)
                 .build();
     }
+
+    private ServiceResponseDTO toServiceResponse(com.justine.model.Service service) {
+        return ServiceResponseDTO.builder()
+                .id(service.getId())
+                .serviceType(service.getServiceType())
+                .price(service.getPrice())
+                .description(service.getDescription())
+                .build();
+    }
+
 
 }

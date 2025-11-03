@@ -24,6 +24,9 @@ public class Invoice {
     @OneToOne
     @JoinColumn(name = "booking_id")
     private Booking booking;
+    @OneToOne
+    @JoinColumn(name = "order_id")
+    private RestaurantOrder order;
 
     private String invoiceUrlMedium;
     private String invoiceUrlThumbnail;

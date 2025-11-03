@@ -32,4 +32,17 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     List<Booking> findByGuestIdAndCheckInDateBetween(Long guestId, LocalDate start, LocalDate end);
     List<Booking> findByCheckInDateBetween(LocalDate start, LocalDate end);
     List<Booking> findByCheckInDateBetweenAndStatus(LocalDate start, LocalDate end, BookingStatus status);
+
+    // Fetch all bookings and their guest, room, services, payment
+    @Query("SELECT b FROM Booking b " +
+            "LEFT JOIN FETCH b.guest " +
+            "LEFT JOIN FETCH b.room " +
+            "LEFT JOIN FETCH b.services " +
+            "LEFT JOIN FETCH b.payment")
+    List<Booking> findAllWithPayment();
+    @Override
+    @EntityGraph(attributePaths = {"guest", "room", "services", "payment"})
+    List<Booking> findAll();
+
+    List<Booking> findByCheckOutDateBeforeOrCheckOutDateEqualsAndStatusNot(LocalDate today, LocalDate today1, BookingStatus bookingStatus);
 }

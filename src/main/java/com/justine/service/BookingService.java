@@ -1,11 +1,11 @@
 package com.justine.service;
 
 import com.justine.dtos.request.BookingRequestDTO;
+import com.justine.dtos.request.OrderItemRequestDTO;
 import com.justine.dtos.request.PaymentRequestDTO;
-import com.justine.dtos.response.BookingResponseDTO;
-import com.justine.dtos.response.InvoiceResponseDTO;
-import com.justine.dtos.response.PaymentResponseDTO;
-import com.justine.dtos.response.RoomResponseDTO;
+import com.justine.dtos.request.RestaurantOrderRequestDTO;
+import com.justine.dtos.response.*;
+import jakarta.transaction.Transactional;
 import org.springframework.http.ResponseEntity;
 
 import java.time.LocalDate;
@@ -47,4 +47,17 @@ public interface BookingService {
     ResponseEntity<InvoiceResponseDTO> generateInvoice(Long bookingId, Long currentUserId);
 
 
+    ResponseEntity<List<RestaurantOrderResponseDTO>> getOrdersForBooking(Long bookingId, Long currentUserId);
+
+    ResponseEntity<RestaurantOrderResponseDTO> addItemToCart(
+            Long bookingId, OrderItemRequestDTO itemDto, Long currentUserId);
+
+    ResponseEntity<RestaurantOrderResponseDTO> confirmCart(Long orderId);
+
+    ResponseEntity<RestaurantOrderResponseDTO> removeItem(Long orderItemId);
+
+    ResponseEntity<BookingResponseDTO> addOrderToBooking(
+            Long bookingId,
+            RestaurantOrderRequestDTO request,
+            Long currentUserId);
 }

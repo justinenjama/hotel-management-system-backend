@@ -1,11 +1,10 @@
 package com.justine.controller;
 
 import com.justine.dtos.request.BookingRequestDTO;
+import com.justine.dtos.request.OrderItemRequestDTO;
 import com.justine.dtos.request.PaymentRequestDTO;
-import com.justine.dtos.response.BookingResponseDTO;
-import com.justine.dtos.response.InvoiceResponseDTO;
-import com.justine.dtos.response.PaymentResponseDTO;
-import com.justine.dtos.response.RoomResponseDTO;
+import com.justine.dtos.request.RestaurantOrderRequestDTO;
+import com.justine.dtos.response.*;
 import com.justine.service.BookingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -115,5 +114,40 @@ public class BookingController {
     @PostMapping("/{id}/invoice")
     public ResponseEntity<InvoiceResponseDTO> generateInvoice(@PathVariable Long id, Principal principal) {
         return bookingService.generateInvoice(id, extractUserId(principal));
+    }
+
+    @GetMapping("/{id}/orders")
+    public ResponseEntity<List<RestaurantOrderResponseDTO>> getOrdersForBooking(
+            @PathVariable("id") Long bookingId,
+            Principal principal) {
+        return bookingService.getOrdersForBooking(bookingId, extractUserId(principal));
+    }
+
+    @PostMapping("/{id}/cart/items")
+    public ResponseEntity<RestaurantOrderResponseDTO> addItemToCart(
+            @PathVariable("id") Long bookingId,
+            @RequestBody OrderItemRequestDTO itemDto,
+            Principal principal) {
+        return bookingService.addItemToCart(bookingId, itemDto, extractUserId(principal));
+    }
+
+    @PostMapping("/cart/{orderId}/confirm")
+    public ResponseEntity<RestaurantOrderResponseDTO> confirmCart(
+            @PathVariable("orderId") Long orderId) {
+        return bookingService.confirmCart(orderId);
+    }
+
+    @DeleteMapping("/cart/items/{itemId}")
+    public ResponseEntity<RestaurantOrderResponseDTO> removeItem(
+            @PathVariable("itemId") Long orderItemId) {
+        return bookingService.removeItem(orderItemId);
+    }
+
+    @PostMapping("/{id}/orders")
+    public ResponseEntity<BookingResponseDTO> addOrderToBooking(
+            @PathVariable("id") Long bookingId,
+            @RequestBody RestaurantOrderRequestDTO request,
+            Principal principal) {
+        return bookingService.addOrderToBooking(bookingId, request, extractUserId(principal));
     }
 }
