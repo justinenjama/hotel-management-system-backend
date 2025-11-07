@@ -32,7 +32,10 @@ public class BookingSchedulerService {
         this.auditLogService = auditLogService;
     }
 
-    // ✅ Runs both at startup and every midnight
+    /**
+     * Auto-checkout bookings that have ended and release rooms.
+     * Runs at startup and every midnight.
+     */
     @PostConstruct
     @Scheduled(cron = "0 0 0 * * *")
     @Transactional
@@ -40,16 +43,16 @@ public class BookingSchedulerService {
         try {
             LocalDate today = LocalDate.now();
 
-            // Only fetch bookings where end date <= today & not yet checked out
-            List<Booking> bookings = bookingRepository
+            // Fetch bookings that have ended but are not yet CHECKED_OUT
+            List<Booking> bookingsToCheckout = bookingRepository
                     .findByCheckOutDateBeforeOrCheckOutDateEqualsAndStatusNot(
                             today, today, BookingStatus.CHECKED_OUT
                     );
 
-            bookings.forEach(booking -> {
+            for (Booking booking : bookingsToCheckout) {
                 Room room = booking.getRoom();
 
-                // Mark booking as CHECKED_OUT
+                // Update booking status to CHECKED_OUT
                 if (booking.getStatus() != BookingStatus.CHECKED_OUT) {
                     booking.setStatus(BookingStatus.CHECKED_OUT);
                     bookingRepository.save(booking);
@@ -62,7 +65,7 @@ public class BookingSchedulerService {
                     );
                 }
 
-                // Release room if still occupied
+                // Release room if it is still marked as occupied
                 if (room != null && !room.isAvailable()) {
                     room.setAvailable(true);
                     roomRepository.save(room);
@@ -74,13 +77,18 @@ public class BookingSchedulerService {
                             Map.of("roomId", room.getId(), "checkOutDate", booking.getCheckOutDate())
                     );
                 }
-            });
+            }
 
-            log.info("✔ Auto checkout + room release completed successfully");
+            log.info("✔ Auto checkout and room release completed successfully. Bookings processed: {}", bookingsToCheckout.size());
+
         } catch (Exception e) {
-            log.error("❌ Auto checkout error: {}", e.getMessage());
-            auditLogService.logBooking(null, "AUTO_CHECKOUT_ERROR", null,
-                    Map.of("error", e.getMessage()));
+            log.error("❌ Auto checkout error: {}", e.getMessage(), e);
+            auditLogService.logBooking(
+                    null,
+                    "AUTO_CHECKOUT_ERROR",
+                    null,
+                    Map.of("error", e.getMessage())
+            );
         }
     }
 }

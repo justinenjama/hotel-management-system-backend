@@ -28,9 +28,7 @@ public class EmailServiceImpl implements EmailService {
 
     private final JavaMailSender mailSender;
     private final StaffRepository staffRepository;
-
     private ExecutorService emailExecutor;
-
     public EmailServiceImpl(JavaMailSender mailSender,
                             StaffRepository staffRepository) {
         this.mailSender = mailSender;

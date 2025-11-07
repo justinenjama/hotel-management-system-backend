@@ -1,5 +1,6 @@
 package com.justine.controller;
 
+import com.justine.dtos.request.ChangePasswordRequestDTO;
 import com.justine.dtos.request.GuestDTO;
 import com.justine.dtos.request.LoginRequestDTO;
 import com.justine.enums.StaffRole;
@@ -73,5 +74,18 @@ public class AuthController {
 
         return authService.updateUser(id, updates, authentication);
     }
+
+    @PutMapping("/change-password")
+    public ResponseEntity<?> changePassword(
+            @RequestBody ChangePasswordRequestDTO request,
+            Authentication authentication
+    ) {
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Unauthenticated"));
+        }
+        Long userId = Long.parseLong(authentication.getName());
+        return authService.changePassword(userId, request, authentication);
+    }
+
 
 }

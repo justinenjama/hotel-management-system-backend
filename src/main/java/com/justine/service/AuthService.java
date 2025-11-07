@@ -1,5 +1,6 @@
 package com.justine.service;
 
+import com.justine.dtos.request.ChangePasswordRequestDTO;
 import com.justine.dtos.request.GuestDTO;
 import com.justine.dtos.request.LoginRequestDTO;
 import com.justine.enums.StaffRole;
@@ -25,4 +26,6 @@ public interface AuthService {
     ResponseEntity<?> registerStaff(GuestDTO staffDTO, StaffRole role);
 
     ResponseEntity<?> updateUser(Long id, Map<String, Object> updates, Authentication authentication);
+
+    ResponseEntity<?> changePassword(Long userId, ChangePasswordRequestDTO request, Authentication authentication);
 }

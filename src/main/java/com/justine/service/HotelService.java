@@ -1,5 +1,6 @@
 package com.justine.service;
 
+import com.justine.dtos.request.CreateServiceRequest;
 import com.justine.dtos.request.HotelRequestDTO;
 import com.justine.dtos.request.RoomRequestDTO;
 import com.justine.dtos.response.HotelResponseDTO;
@@ -26,7 +27,7 @@ public interface HotelService {
     List<RoomResponseDTO> getRoomsByHotel(Long hotelId);
 
     List<ServiceResponseDTO> getServicesForHotel(Long hotelId);
-    ServiceResponseDTO addServiceToHotel(Long hotelId, Long serviceId);
+    ServiceResponseDTO addServiceToHotel(Long hotelId, CreateServiceRequest request);
 
     RoomResponseDTO getRoomById(Long roomId);
 

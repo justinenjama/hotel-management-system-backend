@@ -3,6 +3,7 @@ package com.justine.model;
 import jakarta.persistence.*;
 import lombok.*;
 import com.justine.enums.StaffRole;
+import java.util.List;
 
 @Entity
 @Data
@@ -32,5 +33,9 @@ public class Staff {
     @ManyToOne
     @JoinColumn(name = "hotel_id")
     private Hotel hotel;
+
+    @OneToMany(mappedBy = "staff", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<Notification> notifications;
+
 }
 

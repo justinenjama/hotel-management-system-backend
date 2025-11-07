@@ -37,6 +37,9 @@ public class Guest {
     @OneToMany(mappedBy = "guest", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<RestaurantOrder> restaurantOrders;
 
+    @OneToMany(mappedBy = "guest", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<Notification> notifications;
+
     @CreationTimestamp
     private LocalDateTime createdAt;
 }

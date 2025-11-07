@@ -1,5 +1,6 @@
 package com.justine.serviceImpl;
 
+import com.justine.dtos.request.ChangePasswordRequestDTO;
 import com.justine.dtos.request.GuestDTO;
 import com.justine.dtos.request.LoginRequestDTO;
 import com.justine.dtos.response.GuestResponseDTO;
@@ -210,6 +211,58 @@ public class AuthServiceImpl implements AuthService {
         }
     }
 
+    @Override
+    public ResponseEntity<?> changePassword(Long userId, ChangePasswordRequestDTO request, Authentication authentication) {
+        try {
+            String oldPassword = request.getOldPassword();
+            String newPassword = request.getNewPassword();
+            String confirmNewPassword = request.getConfirmNewPassword();
+
+            if (!newPassword.equals(confirmNewPassword)) {
+                return new ResponseEntity<>("Password do not match", HttpStatus.BAD_REQUEST);
+            }
+
+            if (!isPasswordStrong(newPassword)) {
+                return new ResponseEntity<>("Password must be at least 8 characters, include uppercase, lowercase, number, and special character", HttpStatus.BAD_REQUEST);
+            }
+
+            boolean isStaff = authentication.getAuthorities().stream()
+                    .anyMatch(a -> a.getAuthority().contains("STAFF") || a.getAuthority().contains("MANAGER") || a.getAuthority().contains("ADMIN"));
+
+            if (isStaff) {
+                Staff staff = staffRepository.findById(userId)
+                        .orElseThrow(() -> new RuntimeException("Staff not found"));
+
+                if (!passwordEncoder.matches(oldPassword, staff.getPassword())) {
+                    return  new ResponseEntity<>("Old password is incorrect", HttpStatus.UNAUTHORIZED);
+                }
+
+                staff.setPassword(passwordEncoder.encode(newPassword));
+                staffRepository.save(staff);
+                auditLogService.logAuthService(staff.getId(), "CHANGE_PASSWORD_SUCCESS", Map.of("type", "STAFF"));
+                return new ResponseEntity<>("Password changed successfully", HttpStatus.OK);
+
+            } else {
+                Guest guest = guestRepository.findById(userId)
+                        .orElseThrow(() -> new RuntimeException("Guest not found"));
+
+                if (!passwordEncoder.matches(oldPassword, guest.getPassword())) {
+                    return  new ResponseEntity<>("Old password is incorrect", HttpStatus.UNAUTHORIZED);
+                }
+
+                guest.setPassword(passwordEncoder.encode(newPassword));
+                guestRepository.save(guest);
+                auditLogService.logAuthService(guest.getId(), "CHANGE_PASSWORD_SUCCESS", Map.of("type", "GUEST"));
+                return new ResponseEntity<>("Password changed successfully", HttpStatus.OK);
+            }
+
+        } catch (Exception e) {
+            log.error("Change password error: {}", e.getMessage());
+            auditLogService.logAuthService(userId, "CHANGE_PASSWORD_ERROR", Map.of("error", e.getMessage()));
+            return new ResponseEntity<>("Something went wrong", HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
     // ---------------- LOGIN ---------------- //
     @Override
     public ResponseEntity<?> login(LoginRequestDTO loginRequest, HttpServletResponse response) {
@@ -365,4 +418,14 @@ public class AuthServiceImpl implements AuthService {
                 .build();
         return ResponseEntity.ok(Map.of("userType", "GUEST", "user", dto));
     }
+
+    private boolean isPasswordStrong(String password) {
+        if (password.length() < 8) return false;
+        boolean hasUpper = password.chars().anyMatch(Character::isUpperCase);
+        boolean hasLower = password.chars().anyMatch(Character::isLowerCase);
+        boolean hasDigit = password.chars().anyMatch(Character::isDigit);
+        boolean hasSpecial = password.chars().anyMatch(c -> "!@#$%^&*()_+{}[]|:;\"'<>,.?/~`-=".indexOf(c) >= 0);
+        return hasUpper && hasLower && hasDigit && hasSpecial;
+    }
+
 }

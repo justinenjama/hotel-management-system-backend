@@ -1,5 +1,6 @@
 package com.justine.serviceImpl;
 
+import com.justine.dtos.request.CreateServiceRequest;
 import com.justine.dtos.request.HotelRequestDTO;
 import com.justine.dtos.request.RoomRequestDTO;
 import com.justine.dtos.response.HotelResponseDTO;
@@ -295,18 +296,21 @@ public class HotelServiceImpl implements HotelService {
     @Override
     public List<ServiceResponseDTO> getServicesForHotel(Long hotelId) {
         try {
+            Hotel hotel = hotelRepository.findById(hotelId)
+                    .orElseThrow(() -> new EntityNotFoundException("Hotel not found"));
+
             List<com.justine.model.Service> services = serviceRepository.findByHotelId(hotelId);
 
-            List<ServiceResponseDTO> result = services.stream()
-                    .map(this::toServiceResponse)
-                    .toList();
-
-            auditLogService.logHotel(getActorIdFromContext(),
+            auditLogService.logHotel(
+                    getActorIdFromContext(),
                     "GET_HOTEL_SERVICES_SUCCESS",
                     hotelId,
-                    Map.of("serviceCount", result.size()));
+                    Map.of("serviceCount", services.size())
+            );
 
-            return result;
+            return services.stream()
+                    .map(this::toServiceResponse)
+                    .toList();
 
         } catch (Exception e) {
             log.error("Error fetching services for hotel {}: {}", hotelId, e.getMessage(), e);
@@ -321,7 +325,7 @@ public class HotelServiceImpl implements HotelService {
 
     @Override
     @Transactional
-    public ServiceResponseDTO addServiceToHotel(Long hotelId, Long serviceId) {
+    public ServiceResponseDTO addServiceToHotel(Long hotelId, CreateServiceRequest request) {
         try {
             checkAdminAccess();
             Long actorId = getActorIdFromContext();
@@ -329,31 +333,48 @@ public class HotelServiceImpl implements HotelService {
             Hotel hotel = hotelRepository.findById(hotelId)
                     .orElseThrow(() -> new EntityNotFoundException("Hotel not found"));
 
-            com.justine.model.Service service = serviceRepository.findById(serviceId)
-                    .orElseThrow(() -> new EntityNotFoundException("Service not found"));
+            // Prevent duplicate services in same hotel
+            boolean exists = serviceRepository.existsByHotelIdAndServiceType(
+                    hotelId,
+                    request.getServiceType()
+            );
 
-            service.setHotel(hotel);
-            serviceRepository.save(service);
+            if (exists) {
+                auditLogService.logHotel(actorId,
+                        "ADD_SERVICE_TO_HOTEL_DUPLICATE",
+                        hotelId,
+                        Map.of("serviceType", request.getServiceType()));
+                throw new IllegalStateException("Service already exists in this hotel");
+            }
+
+            com.justine.model.Service service = com.justine.model.Service.builder()
+                    .serviceType(request.getServiceType())
+                    .name(request.getName())
+                    .description(request.getDescription())
+                    .price(request.getPrice()) // may trigger @PrePersist defaults
+                    .hotel(hotel)
+                    .build();
+
+            com.justine.model.Service saved = serviceRepository.save(service);
 
             auditLogService.logHotel(actorId,
                     "ADD_SERVICE_TO_HOTEL_SUCCESS",
                     hotelId,
-                    Map.of("serviceId", serviceId));
+                    Map.of("serviceId", saved.getId()));
 
-            return toServiceResponse(service);
+            return toServiceResponse(saved);
 
         } catch (Exception e) {
-            log.error("Error adding service {} to hotel {}: {}", serviceId, hotelId, e.getMessage(), e);
+            log.error("Error adding service {} to hotel {}: {}", request.getServiceType(), hotelId, e.getMessage(), e);
 
             auditLogService.logHotel(getActorIdFromContext(),
                     "ADD_SERVICE_TO_HOTEL_ERROR",
                     hotelId,
-                    Map.of("serviceId", serviceId, "error", e.getMessage()));
+                    Map.of("serviceType", request.getServiceType(), "error", e.getMessage()));
 
             throw new RuntimeException("Failed to add service to hotel", e);
         }
-}
-
+    }
 
     @Override
     public RoomResponseDTO getRoomById(Long roomId) {
@@ -508,10 +529,11 @@ public class HotelServiceImpl implements HotelService {
         return ServiceResponseDTO.builder()
                 .id(service.getId())
                 .serviceType(service.getServiceType())
-                .price(service.getPrice())
+                .name(service.getName())
                 .description(service.getDescription())
+                .price(service.getPrice())
+                .hotelId(service.getHotel() != null ? service.getHotel().getId() : null)
                 .build();
     }
-
 
 }

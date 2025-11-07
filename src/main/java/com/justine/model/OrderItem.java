@@ -1,6 +1,7 @@
 package com.justine.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.justine.enums.OrderStatus;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -16,6 +17,9 @@ public class OrderItem {
     private Long id;
 
     private int quantity;
+
+    @Enumerated(EnumType.STRING)
+    private OrderStatus status;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "food_item_id")

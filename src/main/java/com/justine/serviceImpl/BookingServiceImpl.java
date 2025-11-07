@@ -199,10 +199,21 @@ public class BookingServiceImpl implements BookingService {
             // 3️⃣ Calculate total cost
             long nights = ChronoUnit.DAYS.between(booking.getCheckInDate(), booking.getCheckOutDate());
             double roomCost = booking.getRoom().getPricePerNight() * nights;
+
             double serviceCost = booking.getServices() != null
-                    ? booking.getServices().stream().mapToDouble(s -> s.getPrice() != null ? s.getPrice() : 0.0).sum()
+                    ? booking.getServices().stream()
+                    .mapToDouble(s -> s.getPrice() != null ? s.getPrice() : 0.0)
+                    .sum()
                     : 0.0;
-            double totalCost = roomCost + serviceCost;
+
+            double ordersCost = booking.getOrders() != null
+                    ? booking.getOrders().stream()
+                    .flatMap(o -> o.getOrderItems().stream())
+                    .mapToDouble(i -> i.getFoodItem().getPrice() * i.getQuantity())
+                    .sum()
+                    : 0.0;
+
+            double totalCost = roomCost + serviceCost + ordersCost;
 
             // 4️⃣ Create or update payment
             Payment payment = booking.getPayment() != null ? booking.getPayment() : new Payment();
@@ -217,6 +228,26 @@ public class BookingServiceImpl implements BookingService {
             booking.setPayment(payment);
             booking.setStatus(BookingStatus.CHECKED_IN);
 
+            // 4️⃣a Clear the cart after payment and batch-update order items
+            booking.getOrders().stream()
+                    .filter(o -> o.getCart() && o.getStatus() == OrderStatus.PENDING)
+                    .findFirst()
+                    .ifPresent(cart -> {
+                        cart.setCart(false);
+                        cart.setStatus(OrderStatus.PAID);
+
+                        if (cart.getOrderItems() != null && !cart.getOrderItems().isEmpty()) {
+                            cart.getOrderItems().forEach(item -> {
+                                item.setStatus(OrderStatus.PAID);
+                                item.setOrder(null);
+                            });
+                            orderItemRepository.saveAll(cart.getOrderItems());
+                            cart.getOrderItems().clear();
+                        }
+
+                        restaurantOrderRepository.save(cart);
+                    });
+
             // 5️⃣ Create or update invoice
             Invoice invoice = booking.getInvoice();
             if (invoice == null) {
@@ -228,7 +259,6 @@ public class BookingServiceImpl implements BookingService {
                         .booking(booking)
                         .build();
             } else {
-                // Delete old PDF from Cloudinary before replacing
                 if (invoice.getInvoiceUrl() != null) {
                     cloudinaryService.deleteFile(cloudinaryService.extractPublicIdFromUrl(invoice.getInvoiceUrl()));
                 }
@@ -265,6 +295,7 @@ public class BookingServiceImpl implements BookingService {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
+
 
     // ------------------ Generate Invoice ------------------
     @Override
@@ -788,72 +819,123 @@ public class BookingServiceImpl implements BookingService {
     @Transactional
     public ResponseEntity<RestaurantOrderResponseDTO> addItemToCart(
             Long bookingId, OrderItemRequestDTO itemDto, Long currentUserId) {
+        try {
+            Booking booking = bookingRepository.findById(bookingId)
+                    .orElseThrow(() -> new RuntimeException("Booking not found"));
 
-        Booking booking = bookingRepository.findById(bookingId)
-                .orElseThrow(() -> new RuntimeException("Booking not found"));
+            RestaurantOrder cart = getOrCreateCart(booking);
 
-        RestaurantOrder cart = getOrCreateCart(booking);
+            FoodItem foodItem = foodItemRepository.findById(itemDto.getFoodItemId())
+                    .orElseThrow(() -> new RuntimeException("Food item not found"));
 
-        FoodItem foodItem = foodItemRepository.findById(itemDto.getFoodItemId())
-                .orElseThrow(() -> new RuntimeException("Food item not found"));
+            // Check if the item already exists in the cart
+            OrderItem existingItem = cart.getOrderItems().stream()
+                    .filter(i -> i.getFoodItem().getId().equals(foodItem.getId()))
+                    .findFirst()
+                    .orElse(null);
 
-        OrderItem item = new OrderItem();
-        item.setFoodItem(foodItem);
-        item.setQuantity(itemDto.getQuantity());
-        item.setOrder(cart);
+            if (existingItem != null) {
+                // Update quantity
+                int newQuantity = existingItem.getQuantity() + itemDto.getQuantity();
+                if (newQuantity <= 0) {
+                    cart.getOrderItems().remove(existingItem);
+                    orderItemRepository.delete(existingItem);
+                    auditLogService.logBooking(currentUserId, "REMOVE_ITEM_FROM_CART", bookingId,
+                            Map.of("foodItemId", foodItem.getId()));
+                } else {
+                    existingItem.setQuantity(newQuantity);
+                    auditLogService.logBooking(currentUserId, "UPDATE_CART_ITEM_QUANTITY", bookingId,
+                            Map.of("foodItemId", foodItem.getId(), "newQuantity", newQuantity));
+                }
+            } else if (itemDto.getQuantity() > 0) {
+                // Add new item
+                OrderItem item = new OrderItem();
+                item.setFoodItem(foodItem);
+                item.setQuantity(itemDto.getQuantity());
+                item.setOrder(cart);
+                cart.getOrderItems().add(item);
+                auditLogService.logBooking(currentUserId, "ADD_ITEM_TO_CART", bookingId,
+                        Map.of("foodItemId", foodItem.getId(), "quantity", itemDto.getQuantity()));
+            }
 
-        cart.getOrderItems().add(item);
-        cart.setTotalAmount(cart.getOrderItems().stream()
-                .mapToDouble(i -> i.getFoodItem().getPrice() * i.getQuantity())
-                .sum());
+            // Update total amount
+            cart.setTotalAmount(cart.getOrderItems().stream()
+                    .mapToDouble(i -> i.getFoodItem().getPrice() * i.getQuantity())
+                    .sum());
 
-        bookingRepository.save(booking);
+            bookingRepository.save(booking);
 
-        return ResponseEntity.ok(toRestaurantOrderResponseDTO(cart));
+            return ResponseEntity.ok(toRestaurantOrderResponseDTO(cart));
+
+        } catch (Exception e) {
+            log.error("Error adding item to cart for booking {}: {}", bookingId, e.getMessage(), e);
+            auditLogService.logBooking(currentUserId, "ADD_ITEM_TO_CART_ERROR", bookingId,
+                    Map.of("error", e.getMessage(), "foodItemId", itemDto.getFoodItemId()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
     }
 
     @Override
     @Transactional
     public ResponseEntity<RestaurantOrderResponseDTO> confirmCart(Long orderId) {
-        RestaurantOrder cart = restaurantOrderRepository.findById(orderId)
-                .orElseThrow(() -> new RuntimeException("Cart not found"));
+        try {
+            RestaurantOrder cart = restaurantOrderRepository.findById(orderId)
+                    .orElseThrow(() -> new RuntimeException("Cart not found"));
 
-        cart.setCart(false);
-        cart.setStatus(OrderStatus.CONFIRMED);
+            cart.setCart(false);
+            cart.setStatus(OrderStatus.CONFIRMED);
 
-        Booking booking = cart.getBooking();
-        Invoice invoice = booking.getInvoice();
+            Booking booking = cart.getBooking();
+            Invoice invoice = booking.getInvoice();
 
-        double newTotal = cart.getTotalAmount();
-        invoice.setTotalAmount(invoice.getTotalAmount() + newTotal);
+            double newTotal = cart.getTotalAmount();
+            invoice.setTotalAmount(invoice.getTotalAmount() + newTotal);
 
-        restaurantOrderRepository.save(cart);
-        invoiceRepository.save(invoice);
+            restaurantOrderRepository.save(cart);
+            invoiceRepository.save(invoice);
 
-        // ✅ optional generate new invoice PDF here
+            auditLogService.logBooking(booking.getGuest().getId(), "CONFIRM_CART_SUCCESS", booking.getId(),
+                    Map.of("cartTotal", newTotal));
 
-        return ResponseEntity.ok(toRestaurantOrderResponseDTO(cart));
+            return ResponseEntity.ok(toRestaurantOrderResponseDTO(cart));
+
+        } catch (Exception e) {
+            log.error("Error confirming cart {}: {}", orderId, e.getMessage(), e);
+            auditLogService.logBooking(null, "CONFIRM_CART_ERROR", orderId, Map.of("error", e.getMessage()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
     }
 
     @Override
     @Transactional
     public ResponseEntity<RestaurantOrderResponseDTO> removeItem(Long orderItemId) {
-        OrderItem item = orderItemRepository.findById(orderItemId)
-                .orElseThrow(() -> new RuntimeException("Item not found"));
+        try {
+            OrderItem item = orderItemRepository.findById(orderItemId)
+                    .orElseThrow(() -> new RuntimeException("Item not found"));
 
-        RestaurantOrder cart = item.getOrder();
-        cart.getOrderItems().remove(item);
+            RestaurantOrder cart = item.getOrder();
+            cart.getOrderItems().remove(item);
 
-        orderItemRepository.delete(item);
+            orderItemRepository.delete(item);
 
-        cart.setTotalAmount(cart.getOrderItems().stream()
-                .mapToDouble(i -> i.getFoodItem().getPrice() * i.getQuantity())
-                .sum());
+            cart.setTotalAmount(cart.getOrderItems().stream()
+                    .mapToDouble(i -> i.getFoodItem().getPrice() * i.getQuantity())
+                    .sum());
 
-        restaurantOrderRepository.save(cart);
+            restaurantOrderRepository.save(cart);
 
-        return ResponseEntity.ok(toRestaurantOrderResponseDTO(cart));
+            auditLogService.logBooking(null, "REMOVE_ITEM_SUCCESS", cart.getBooking().getId(),
+                    Map.of("removedItemId", orderItemId));
+
+            return ResponseEntity.ok(toRestaurantOrderResponseDTO(cart));
+
+        } catch (Exception e) {
+            log.error("Error removing item {} from cart: {}", orderItemId, e.getMessage(), e);
+            auditLogService.logBooking(null, "REMOVE_ITEM_ERROR", null, Map.of("error", e.getMessage(), "orderItemId", orderItemId));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
     }
+
 
     @Override
     @Transactional
@@ -966,6 +1048,13 @@ public class BookingServiceImpl implements BookingService {
                 .orElse(null)
                 : null;
 
+        List<RestaurantOrderResponseDTO> orders = booking.getOrders() != null
+                ? booking.getOrders().stream()
+                .filter(o -> !o.getCart())
+                .map(this::toRestaurantOrderResponseDTO)
+                .toList()
+                : Collections.emptyList();
+
         return BookingResponseDTO.builder()
                 .id(booking.getId())
                 .bookingCode(booking.getBookingCode())
@@ -991,19 +1080,37 @@ public class BookingServiceImpl implements BookingService {
                         .build()
                         : null)
                 .cart(cart)
+                .orders(orders)
                 .build();
     }
 
     private RoomResponseDTO toRoomResponse(Room room) {
         if (room == null) return null;
+
         return RoomResponseDTO.builder()
                 .id(room.getId())
                 .roomNumber(room.getRoomNumber())
-                .pricePerNight(room.getPricePerNight())
                 .type(room.getType())
+                .pricePerNight(room.getPricePerNight())
                 .available(room.isAvailable())
+                .roomImageUrl(room.getRoomImageUrl())
+                .hotel(toHotelResponse(room.getHotel())) // <-- map hotel here
                 .build();
     }
+
+    private HotelResponseDTO toHotelResponse(Hotel hotel) {
+        if (hotel == null) return null;
+
+        return HotelResponseDTO.builder()
+                .id(hotel.getId())
+                .name(hotel.getName())
+                .location(hotel.getLocation())
+                .contactNumber(hotel.getContactNumber())
+                .email(hotel.getEmail())
+                .hotelImageUrl(hotel.getHotelImageUrl())
+                .build();
+    }
+
 
     private GuestResponseDTO toGuestResponse(Guest guest) {
         if (guest == null) return null;

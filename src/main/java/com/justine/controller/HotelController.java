@@ -1,5 +1,6 @@
 package com.justine.controller;
 
+import com.justine.dtos.request.CreateServiceRequest;
 import com.justine.dtos.request.HotelRequestDTO;
 import com.justine.dtos.request.RoomRequestDTO;
 import com.justine.dtos.response.ApiResponse;
@@ -111,12 +112,12 @@ public class HotelController {
     }
 
     // Add a service to a hotel
-    @PostMapping("/{hotelId}/services/{serviceId}")
+    @PostMapping("/{hotelId}/services")
     public ResponseEntity<ServiceResponseDTO> addServiceToHotel(
             @PathVariable Long hotelId,
-            @PathVariable Long serviceId
-    ) {
-        ServiceResponseDTO service = hotelService.addServiceToHotel(hotelId, serviceId);
+            @RequestBody CreateServiceRequest request
+            ) {
+        ServiceResponseDTO service = hotelService.addServiceToHotel(hotelId, request);
         return ResponseEntity.ok(service);
     }
 }

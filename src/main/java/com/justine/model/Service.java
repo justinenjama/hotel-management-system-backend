@@ -10,7 +10,15 @@ import com.justine.enums.ServiceType;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-@Table(name = "services")
+@Table(
+        name = "services",
+        uniqueConstraints = {
+                @UniqueConstraint(
+                        name = "unique_service_per_hotel",
+                        columnNames = {"hotel_id", "service_type"}
+                )
+        }
+)
 public class Service {
 
     @Id
@@ -18,7 +26,7 @@ public class Service {
     private Long id;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, unique = true)
+    @Column(nullable = false)
     private ServiceType serviceType;
 
     private String name;
@@ -33,7 +41,6 @@ public class Service {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "hotel_id")
     private Hotel hotel;
-
 
     /**
      * Initialize price if null using the default for the selected service type.

@@ -1,5 +1,6 @@
 package com.justine.repository;
 
+import com.justine.enums.ServiceType;
 import com.justine.model.Service;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -12,4 +13,7 @@ public interface ServiceRepository extends JpaRepository<Service, Long> {
     List<Service> findAllByBookingId(@Param("bookingId") Long bookingId);
 
     List<Service> findByHotelId(Long hotelId);
+
+    boolean existsByHotelIdAndServiceType(Long hotelId, ServiceType serviceType);
+
 }
