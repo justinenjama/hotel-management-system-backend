@@ -22,20 +22,20 @@ public class AuditLogServiceImpl implements AuditLogService {
     private final AuditLogRepository auditLogRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    // Heavy job queue executor (optimized for high concurrency)
+    // Heavy job queue executor for high concurrency
     private final ExecutorService auditExecutor = new ThreadPoolExecutor(
-            4, // Core pool size
-            8, // Max pool size
-            60L, TimeUnit.SECONDS, // Idle thread timeout
-            new LinkedBlockingQueue<>(500), // Queue size
-            new ThreadPoolExecutor.CallerRunsPolicy() // Backpressure control
+            4,
+            8,
+            60L, TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(500),
+            new ThreadPoolExecutor.CallerRunsPolicy()
     );
 
     public AuditLogServiceImpl(AuditLogRepository auditLogRepository) {
         this.auditLogRepository = auditLogRepository;
     }
 
-    // ------------------ Generic Save (Async Optimized) ------------------
+    // Generic Save
     @Async("auditExecutor")
     @Transactional
     @Override
@@ -52,7 +52,7 @@ public class AuditLogServiceImpl implements AuditLogService {
                         .build();
 
                 auditLogRepository.save(logEntry);
-                log.debug("[AUDIT ✅] {} | action={} | entityId={}", entity, action, entityId);
+                log.debug("[AUDIT] {} | action={} | entityId={}", entity, action, entityId);
             } catch (Exception e) {
                 log.error("[AUDIT ERROR] Could not save log for {}: {}", entity, e.getMessage());
             }
@@ -141,7 +141,7 @@ public class AuditLogServiceImpl implements AuditLogService {
                         .build();
 
                 auditLogRepository.save(logEntry);
-                log.info("[AUDIT ✅] PasswordReset | action={} | ip={}", action, ip);
+                log.info("[AUDIT] PasswordReset | action={} | ip={}", action, ip);
             } catch (Exception e) {
                 log.error("[AUDIT ERROR] Failed password reset log: {}", e.getMessage());
             }
@@ -180,7 +180,7 @@ public class AuditLogServiceImpl implements AuditLogService {
                         .build();
 
                 auditLogRepository.save(logEntry);
-                log.debug("[AUDIT ✅] System | action={} | metadata={}", action, json);
+                log.debug("[AUDIT] System | action={} | metadata={}", action, json);
             } catch (Exception e) {
                 log.error("[AUDIT ERROR] Failed system log '{}': {}", action, e.getMessage());
             }
@@ -202,7 +202,7 @@ public class AuditLogServiceImpl implements AuditLogService {
                         .build();
 
                 auditLogRepository.save(auditLog);
-                log.debug("[AUDIT ✅] Contact | action={} | entityId={}", action, entityId);
+                log.debug("[AUDIT] Contact | action={} | entityId={}", action, entityId);
             } catch (Exception e) {
                 log.error("[AUDIT ERROR] Failed contact message log: {}", e.getMessage(), e);
             }

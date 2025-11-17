@@ -8,6 +8,7 @@ import com.justine.dtos.response.*;
 import com.justine.enums.BookingStatus;
 import com.justine.enums.OrderStatus;
 import com.justine.enums.PaymentStatus;
+import com.justine.enums.StaffRole;
 import com.justine.model.*;
 import com.justine.repository.*;
 import com.justine.service.AuditLogService;
@@ -68,34 +69,35 @@ public class BookingServiceImpl implements BookingService {
                 .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
     }
 
-    private Long getCurrentUserId() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null || auth.getName() == null) return null;
-        try {
-            return Long.parseLong(auth.getName());
-        } catch (NumberFormatException e) {
-            log.error("Failed to parse current user ID from principal: {}", auth.getName());
-            return null;
-        }
+    private boolean isReceptionist() {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_RECEPTIONIST"));
     }
+
     @Override
     @Transactional
     public ResponseEntity<BookingResponseDTO> createBooking(BookingRequestDTO dto, Long currentUserId) {
         try {
-            boolean adminOrStaff = isAdmin();
+            // ---------------- Permission Check ----------------
+            boolean admin = isAdmin();
+            boolean receptionist = isReceptionist(); // new helper
 
             Guest guest = guestRepository.findById(dto.getGuestId())
                     .orElseThrow(() -> new RuntimeException("Guest not found"));
 
-            if (!adminOrStaff && (currentUserId == null || !currentUserId.equals(guest.getId()))) {
+            boolean canBook = admin || receptionist || (currentUserId != null && currentUserId.equals(guest.getId()));
+            if (!canBook) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
             }
 
+            // ---------------- Room Availability ----------------
             Room room = roomRepository.findById(dto.getRoomId())
                     .orElseThrow(() -> new RuntimeException("Room not found"));
 
             if (!room.isAvailable()) return ResponseEntity.status(HttpStatus.CONFLICT).build();
 
+            // ---------------- Create Booking ----------------
             Booking booking = Booking.builder()
                     .bookingCode(UUID.randomUUID().toString().replace("-", "").substring(0, 10).toUpperCase())
                     .checkInDate(dto.getCheckInDate())
@@ -106,25 +108,28 @@ public class BookingServiceImpl implements BookingService {
                     .room(room)
                     .build();
 
-            if (adminOrStaff) {
+            // Assign staff if booked by admin or receptionist
+            if (admin || receptionist) {
                 Staff staff = staffRepository.findById(currentUserId)
                         .orElseThrow(() -> new RuntimeException("Staff not found"));
                 booking.setStaff(staff);
             }
 
+            // ---------------- Attach Services ----------------
             if (dto.getServiceIds() != null && !dto.getServiceIds().isEmpty()) {
                 List<com.justine.model.Service> services = serviceRepository.findAllById(dto.getServiceIds());
                 booking.setServices(new ArrayList<>(services));
             }
 
+            // ---------------- Save Booking ----------------
             room.setAvailable(false);
             roomRepository.save(room);
 
             Booking saved = bookingRepository.save(booking);
 
-            // ---------------- Corrected totalAmount calculation ----------------
+            // ---------------- Calculate Total Amount ----------------
             long nights = ChronoUnit.DAYS.between(saved.getCheckInDate(), saved.getCheckOutDate());
-            nights = Math.max(nights, 1); // ensure at least 1 night
+            nights = Math.max(nights, 1); // at least 1 night
 
             double totalAmount = (saved.getRoom().getPricePerNight() != null ? saved.getRoom().getPricePerNight() : 0.0) * nights;
 
@@ -133,8 +138,8 @@ public class BookingServiceImpl implements BookingService {
                         .mapToDouble(s -> s.getPrice() != null ? s.getPrice() : 0.0)
                         .sum();
             }
-            // -------------------------------------------------------------------
 
+            // ---------------- Generate Invoice ----------------
             Invoice invoice = Invoice.builder()
                     .invoiceNumber("INV-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase())
                     .issuedDate(LocalDate.now())
@@ -149,6 +154,7 @@ public class BookingServiceImpl implements BookingService {
             saved.setInvoice(invoice);
             bookingRepository.save(saved);
 
+            // ---------------- Audit Logging ----------------
             auditLogService.logBooking(
                     guest.getId(),
                     "AUTO_GENERATE_INVOICE_SUCCESS",
@@ -156,7 +162,7 @@ public class BookingServiceImpl implements BookingService {
                     Map.of("invoiceNumber", invoice.getInvoiceNumber(), "amount", totalAmount)
             );
 
-            if (adminOrStaff) {
+            if (admin || receptionist) {
                 auditLogService.logBooking(
                         booking.getStaff().getId(),
                         "CREATE_BOOKING_BY_STAFF",
@@ -181,6 +187,7 @@ public class BookingServiceImpl implements BookingService {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
+
 
     // ------------------ Make Booking Payment ------------------
     @Override
@@ -1036,6 +1043,127 @@ public class BookingServiceImpl implements BookingService {
         }
     }
 
+    // ------------------ New Method: Get Receptionist Bookings and Contributions ------------------
+    @Override
+    public ResponseEntity<ReceptionistBookingsResponseDTO> getReceptionistBookingsAndContributions(Long currentUserId) {
+        try {
+            // Validate Staff Existence & Role
+            Staff staff = staffRepository.findById(currentUserId)
+                    .orElseThrow(() -> new RuntimeException("Staff not found"));
+
+            if (!"RECEPTIONIST".equals(staff.getRole().name())) {
+                auditLogService.logBooking(
+                        currentUserId,
+                        "GET_RECEPTIONIST_BOOKINGS_FORBIDDEN",
+                        null,
+                        Map.of("reason", "User is not a receptionist")
+                );
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+            }
+
+            // Get bookings handled by this receptionist
+            List<Booking> bookings = bookingRepository.findByStaffId(currentUserId);
+
+            List<BookingResponseDTO> bookingDTOs = bookings.stream()
+                    .map(this::toBookingResponse)
+                    .collect(Collectors.toList());
+
+            // Compute Contribution Metrics
+            int totalBookings = bookings.size();
+
+            double totalRevenue = bookings.stream()
+                    .filter(b -> b.getInvoice() != null && b.getInvoice().isPaid())
+                    .mapToDouble(b -> b.getInvoice().getTotalAmount())
+                    .sum();
+
+            double totalUnpaidRevenue = bookings.stream()
+                    .filter(b -> b.getInvoice() != null && !b.getInvoice().isPaid())
+                    .mapToDouble(b -> b.getInvoice().getTotalAmount())
+                    .sum();
+
+            Map<String, Object> contributions = Map.of(
+                    "totalBookings", totalBookings,
+                    "totalRevenue", totalRevenue,
+                    "totalUnpaidRevenue", totalUnpaidRevenue
+            );
+
+            // ✅ Build Response DTO
+            ReceptionistBookingsResponseDTO response = ReceptionistBookingsResponseDTO.builder()
+                    .bookings(bookingDTOs)
+                    .contributions(contributions)
+                    .build();
+
+            // ✅ Audit Log
+            auditLogService.logBooking(
+                    currentUserId,
+                    "GET_RECEPTIONIST_BOOKINGS_SUCCESS",
+                    null,
+                    Map.of("totalBookings", totalBookings, "totalRevenue", totalRevenue)
+            );
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            log.error("Error fetching receptionist bookings for user {}: {}", currentUserId, e.getMessage(), e);
+
+            auditLogService.logBooking(
+                    currentUserId,
+                    "GET_RECEPTIONIST_BOOKINGS_ERROR",
+                    null,
+                    Map.of("error", e.getMessage())
+            );
+
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+    @Override
+    public ResponseEntity<List<InvoiceResponseDTO>> getReceptionistInvoices(Long currentUserId) {
+        try {
+            Staff staff = staffRepository.findById(currentUserId)
+                    .orElseThrow(() -> new RuntimeException("Staff not found"));
+
+            // Only admin or receptionist can view invoices
+            if (!staff.getRole().equals(StaffRole.RECEPTIONIST) && !staff.getRole().equals(StaffRole.ADMIN)) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+            }
+
+            List<Booking> bookings;
+
+            if (staff.getRole().equals(StaffRole.ADMIN)) {
+                // Admin sees all bookings with invoices
+                bookings = bookingRepository.findAll(); // `@EntityGraph` already loads invoice, guest, room, services
+            } else {
+                // Receptionist sees only bookings they created
+                bookings = bookingRepository.findBookingsWithInvoiceByStaffId(currentUserId);
+            }
+
+            // Map bookings with invoices to InvoiceResponseDTO
+            List<InvoiceResponseDTO> invoices = bookings.stream()
+                    .filter(b -> b.getInvoice() != null) // only bookings that have an invoice
+                    .map(b -> {
+                        Invoice invoice = b.getInvoice();
+                        return InvoiceResponseDTO.builder()
+                                .id(invoice.getId())
+                                .invoiceNumber(invoice.getInvoiceNumber())
+                                .invoiceUrl(invoice.getInvoiceUrl())
+                                .invoiceUrlMedium(invoice.getInvoiceUrlMedium())
+                                .invoiceUrlThumbnail(invoice.getInvoiceUrlThumbnail())
+                                .generatedAt(invoice.getGeneratedAt())
+                                .issuedDate(invoice.getIssuedDate())
+                                .totalAmount(invoice.getTotalAmount())
+                                .paid(invoice.isPaid())
+                                .booking(toBookingResponse(b)) // full BookingResponseDTO
+                                .build();
+                    })
+                    .collect(Collectors.toList());
+
+            return ResponseEntity.ok(invoices);
+
+        } catch (Exception e) {
+            log.error("Error fetching receptionist invoices for user {}: {}", currentUserId, e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
 
     // ------------------ Mapping Helpers ------------------
     private BookingResponseDTO toBookingResponse(Booking booking) {

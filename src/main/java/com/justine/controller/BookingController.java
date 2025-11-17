@@ -150,4 +150,16 @@ public class BookingController {
             Principal principal) {
         return bookingService.addOrderToBooking(bookingId, request, extractUserId(principal));
     }
+
+    @GetMapping("/receptionist/bookings")
+    public ResponseEntity<ReceptionistBookingsResponseDTO> getReceptionistBookings(@RequestParam Long currentUserId) {
+        return bookingService.getReceptionistBookingsAndContributions(currentUserId);
+    }
+
+    @GetMapping("/receptionist/invoices")
+    public ResponseEntity<List<InvoiceResponseDTO>> getReceptionistInvoices(@RequestParam Long currentUserId) {
+        return bookingService.getReceptionistInvoices(currentUserId);
+    }
+
+
 }

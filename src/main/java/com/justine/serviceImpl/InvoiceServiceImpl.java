@@ -2,8 +2,10 @@ package com.justine.serviceImpl;
 
 import com.justine.dtos.request.InvoiceRequestDTO;
 import com.justine.dtos.response.InvoiceResponseDTO;
+import com.justine.enums.StaffRole;
 import com.justine.model.Booking;
 import com.justine.model.Invoice;
+import com.justine.model.Staff;
 import com.justine.repository.BookingRepository;
 import com.justine.repository.InvoiceRepository;
 import com.justine.repository.StaffRepository;
@@ -99,10 +101,21 @@ public class InvoiceServiceImpl implements InvoiceService {
             booking = bookingRepository.findById(bookingId)
                     .orElseThrow(() -> new EntityNotFoundException("Booking not found"));
 
+            log.debug("Fetching booking with ID {}", bookingId);
+
+
             Invoice invoice = invoiceRepository.findByBookingId(bookingId);
             if (invoice == null) throw new EntityNotFoundException("Invoice not found");
 
-            if (!isAdmin() && !booking.getGuest().getId().equals(currentUserId)) {
+            // Fetch current user role if it's staff
+            Staff staff = staffRepository.findById(currentUserId).orElse(null);
+
+            // Allow admin, guest, or receptionist
+            boolean allowed = isAdmin() ||
+                    booking.getGuest().getId().equals(currentUserId) ||
+                    (staff != null && staff.getRole() == StaffRole.RECEPTIONIST);
+
+            if (!allowed) {
                 throw new SecurityException("Forbidden: You are not allowed to view this invoice");
             }
 

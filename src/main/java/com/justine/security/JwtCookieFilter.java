@@ -52,7 +52,7 @@ public class JwtCookieFilter extends OncePerRequestFilter {
                 boolean isStaff = roles.stream().anyMatch(r ->
                         r.equalsIgnoreCase("ADMIN") ||
                                 r.equalsIgnoreCase("MANAGER") ||
-                                r.equalsIgnoreCase("STAFF")
+                                r.equalsIgnoreCase("RECEPTIONIST")
                 );
 
                 UserDetails userDetails = userDetailsService.loadUserById(Long.parseLong(userId), isStaff);
@@ -71,23 +71,25 @@ public class JwtCookieFilter extends OncePerRequestFilter {
             }
         } catch (Exception e) {
             log.warn("[JWT_COOKIE_FILTER] Token invalid: {}", e.getMessage());
-            clearInvalidCookies(response);
+            clearInvalidCookies(request, response);
         }
 
         filterChain.doFilter(request, response);
     }
 
     private String extractAccessToken(HttpServletRequest request) {
-        if (request.getCookies() == null) return null;
-        return Arrays.stream(request.getCookies())
-                .filter(c -> JwtUtils.getAccessCookieName().equals(c.getName()))
-                .map(Cookie::getValue)
-                .findFirst()
-                .orElse(null);
+        if (request.getCookies() != null) {
+            for (Cookie c : request.getCookies()) {
+                if (JwtUtils.getAccessCookieName().equals(c.getName())) {
+                    return c.getValue();
+                }
+            }
+        }
+        return null;
     }
 
-    private void clearInvalidCookies(HttpServletResponse response) {
-        response.addHeader("Set-Cookie", new Cookie(JwtUtils.getAccessCookieName(), "").toString());
-        response.addHeader("Set-Cookie", new Cookie(JwtUtils.getRefreshCookieName(), "").toString());
+    private void clearInvalidCookies(HttpServletRequest request, HttpServletResponse response) {
+        response.addHeader("Set-Cookie", jwtUtils.clearAccessTokenCookie(request).toString());
+        response.addHeader("Set-Cookie", jwtUtils.clearRefreshTokenCookie(request).toString());
     }
 }

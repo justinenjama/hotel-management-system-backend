@@ -58,4 +58,17 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     List<Booking> findActiveBookingsByHotel(@Param("hotelId") Long hotelId, @Param("today") LocalDate today);
 
     List<Booking> findByCheckOutDateBeforeOrCheckOutDateEqualsAndStatusNot(LocalDate today, LocalDate today1, BookingStatus bookingStatus);
+
+    @EntityGraph(attributePaths = {"guest", "room", "services", "invoice"})
+    List<Booking> findByStaffId(Long staffId);
+
+    @Query("SELECT b FROM Booking b " +
+            "LEFT JOIN FETCH b.guest " +
+            "LEFT JOIN FETCH b.room " +
+            "LEFT JOIN FETCH b.services " +
+            "LEFT JOIN FETCH b.invoice " +
+            "WHERE b.staff.id = :staffId")
+    List<Booking> findBookingsWithInvoiceByStaffId(@Param("staffId") Long staffId);
+
 }
+

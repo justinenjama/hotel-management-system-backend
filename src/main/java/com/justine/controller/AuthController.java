@@ -3,6 +3,8 @@ package com.justine.controller;
 import com.justine.dtos.request.ChangePasswordRequestDTO;
 import com.justine.dtos.request.GuestDTO;
 import com.justine.dtos.request.LoginRequestDTO;
+import com.justine.dtos.request.StaffRequestDTO;
+import com.justine.dtos.response.GuestResponseDTO;
 import com.justine.enums.StaffRole;
 import com.justine.service.AuthService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -13,6 +15,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -33,28 +36,27 @@ public class AuthController {
     @PreAuthorize("hasRole('ADMIN')")
     @PostMapping("/register-staff")
     public ResponseEntity<?> registerStaff(
-            @RequestBody GuestDTO staffDTO,
-            @RequestParam(defaultValue = "RECEPTIONIST") StaffRole role
+            @RequestBody StaffRequestDTO staffDTO,
+            Authentication authentication
     ) {
-        return authService.registerStaff(staffDTO, role);
+        return authService.registerStaff(staffDTO, authentication);
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody LoginRequestDTO loginRequest, HttpServletResponse response) {
-        return authService.login(loginRequest, response);
+    public ResponseEntity<?> login(@RequestBody LoginRequestDTO loginRequest, HttpServletRequest request, HttpServletResponse response) {
+        return authService.login(loginRequest, request, response);
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<?> logout(HttpServletResponse response) {
-        return authService.logout(response);
+    public ResponseEntity<?> logout(HttpServletRequest request, HttpServletResponse response) {
+        return authService.logout(request, response);
     }
 
     @PostMapping("/refresh")
     public ResponseEntity<?> refreshToken(
-            @CookieValue(name = "REFRESH_TOKEN", required = false) String refreshToken,
-            HttpServletResponse response
+            HttpServletRequest request, HttpServletResponse response, @CookieValue(name = "REFRESH_TOKEN", required = false) String refreshToken
     ) {
-        return authService.refreshToken(response, refreshToken);
+        return authService.refreshToken(request, response, refreshToken);
     }
 
     @GetMapping("/me")
@@ -85,6 +87,11 @@ public class AuthController {
         }
         Long userId = Long.parseLong(authentication.getName());
         return authService.changePassword(userId, request, authentication);
+    }
+
+    @GetMapping("/users")
+    public ResponseEntity<List<GuestResponseDTO>> getAllGuests(){
+        return authService.getAllUsers();
     }
 
 

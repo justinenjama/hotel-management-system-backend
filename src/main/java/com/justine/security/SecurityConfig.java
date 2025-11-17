@@ -71,7 +71,9 @@ public class SecurityConfig {
                 "http://192.168.137.1:5173",
                 "http://192.168.77.251:5173",
                 "http://10.28.150.158:5173",
-                "http://10.149.0.19:5173"
+                "http://10.149.0.19:5173",
+                "http://10.19.189.119:5173",
+                "http://192.168.110.65:5173"
         ));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("Content-Type", "Authorization", "X-Requested-With"));

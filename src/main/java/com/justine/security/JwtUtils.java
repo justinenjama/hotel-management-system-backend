@@ -6,13 +6,17 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
+import io.jsonwebtoken.security.SignatureException;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseCookie;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
-import java.util.*;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
 
 @Component
@@ -38,46 +42,64 @@ public class JwtUtils {
         return Keys.hmacShaKeyFor(keyBytes);
     }
 
-    // --- TOKEN GENERATION ---
+    // ---------------- TOKEN GENERATION ----------------
     public String generateToken(Guest guest) {
-        Map<String, Object> claims = Map.of("roles", List.of(guest.getRole()));
-        return buildToken(claims, guest.getId().toString(), jwtExpirationMs);
+        return buildToken(Map.of("roles", List.of(guest.getRole())), guest.getId().toString(), jwtExpirationMs);
     }
 
     public String generateToken(Staff staff) {
-        Map<String, Object> claims = Map.of("roles", List.of(staff.getRole().name()));
-        return buildToken(claims, staff.getId().toString(), jwtExpirationMs);
+        return buildToken(Map.of("roles", List.of(staff.getRole().name())), staff.getId().toString(), jwtExpirationMs);
     }
 
     public String generateRefreshToken(Guest guest) {
-        Map<String, Object> claims = Map.of("roles", List.of(guest.getRole()));
-        return buildToken(claims, guest.getId().toString(), jwtRefreshExpirationMs);
+        return buildToken(Map.of("roles", List.of(guest.getRole())), guest.getId().toString(), jwtRefreshExpirationMs);
     }
 
     public String generateRefreshToken(Staff staff) {
-        Map<String, Object> claims = Map.of("roles", List.of(staff.getRole().name()));
-        return buildToken(claims, staff.getId().toString(), jwtRefreshExpirationMs);
+        return buildToken(Map.of("roles", List.of(staff.getRole().name())), staff.getId().toString(), jwtRefreshExpirationMs);
     }
 
-    private String buildToken(Map<String, Object> claims, String subject, long exp) {
+    private String buildToken(Map<String, Object> claims, String subject, long expirationMs) {
         return Jwts.builder()
                 .claims(claims)
                 .subject(subject)
                 .issuer(jwtIssuer)
                 .issuedAt(new Date())
-                .expiration(new Date(System.currentTimeMillis() + exp))
+                .expiration(new Date(System.currentTimeMillis() + expirationMs))
                 .signWith(getSignInKey())
                 .compact();
     }
 
-    // --- VALIDATION ---
+    // ---------------- TOKEN VALIDATION ----------------
     public boolean isTokenValid(String token) {
-        try { return !isTokenExpired(token); }
-        catch (Exception e) { return false; }
+        try {
+            return !isTokenExpired(token);
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private boolean isTokenExpired(String token) {
-        return extractExpiration(token).before(new Date());
+        Date exp = extractClaim(token, Claims::getExpiration);
+        return exp.before(new Date());
+    }
+
+    private <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
+        return claimsResolver.apply(extractAllClaims(token));
+    }
+
+    private Claims extractAllClaims(String token) {
+        try {
+            return Jwts.parser()
+                    .verifyWith(getSignInKey())
+                    .build()
+                    .parseSignedClaims(token)
+                    .getPayload();
+        } catch (SignatureException e) {
+            throw new RuntimeException("Invalid JWT signature", e);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to parse JWT", e);
+        }
     }
 
     public String extractSubject(String token) {
@@ -91,81 +113,66 @@ public class JwtUtils {
         return List.of();
     }
 
-    private Date extractExpiration(String token) {
-        return extractClaim(token, Claims::getExpiration);
+    // ---------------- COOKIE MANAGEMENT ----------------
+    public ResponseCookie generateAccessTokenCookie(String token, HttpServletRequest request) {
+        return buildCookie(ACCESS_COOKIE_NAME, token, jwtExpirationMs / 1000, "/", request);
     }
 
-    private <T> T extractClaim(String token, Function<Claims, T> fn) {
-        return fn.apply(extractAllClaims(token));
+    public ResponseCookie generateRefreshTokenCookie(String token, HttpServletRequest request) {
+        return buildCookie(REFRESH_COOKIE_NAME, token, jwtRefreshExpirationMs / 1000, "/auth/refresh", request);
     }
 
-    private Claims extractAllClaims(String token) {
-        return Jwts.parser().verifyWith(getSignInKey()).build().parseSignedClaims(token).getPayload();
+    public ResponseCookie clearAccessTokenCookie(HttpServletRequest request) {
+        return buildCookie(ACCESS_COOKIE_NAME, "", 0, "/", request);
     }
 
-    // --- COOKIES ---
-    public ResponseCookie generateAccessTokenCookie(String token) {
-        return baseCookie(ACCESS_COOKIE_NAME, token, jwtExpirationMs / 1000, "/");
+    public ResponseCookie clearRefreshTokenCookie(HttpServletRequest request) {
+        return buildCookie(REFRESH_COOKIE_NAME, "", 0, "/auth/refresh", request);
     }
 
-    public ResponseCookie generateRefreshTokenCookie(String token) {
-        return baseCookie(REFRESH_COOKIE_NAME, token, jwtRefreshExpirationMs / 1000, "/auth/refresh");
-    }
-
-    public ResponseCookie clearAccessTokenCookie() {
-        return baseCookie(ACCESS_COOKIE_NAME, "", 0, "/");
-    }
-
-    public ResponseCookie clearRefreshTokenCookie() {
-        return baseCookie(REFRESH_COOKIE_NAME, "", 0, "/auth/refresh");
-    }
-
-    private ResponseCookie baseCookie(String name, String val, long maxAge, String path) {
-        boolean isDev = true; // or inject a property
-        return ResponseCookie.from(name, val)
+    private ResponseCookie buildCookie(String name, String value, long maxAge, String path, HttpServletRequest request) {
+        boolean isSecure = request.isSecure(); // HTTPS only
+        return ResponseCookie.from(name, value)
                 .httpOnly(true)
-                .secure(!isDev) // false in dev, true in prod
-                .sameSite(isDev ? "Lax" : "None")
+                .secure(isSecure)
+                .sameSite(isSecure ? "None" : "Lax")
                 .path(path)
                 .maxAge(maxAge)
                 .build();
     }
 
-
-    public static String getAccessCookieName() { return ACCESS_COOKIE_NAME; }
-    public static String getRefreshCookieName() { return REFRESH_COOKIE_NAME; }
-
-    /**
-     * Extracts the JWT from the request cookies or Authorization header
-     */
+    // ---------------- TOKEN EXTRACTION ----------------
     public String extractTokenFromRequest(HttpServletRequest request) {
-        // 1. Try from cookie first
+        // 1️⃣ Check cookies first
         if (request.getCookies() != null) {
-            for (var cookie : request.getCookies()) {
+            for (Cookie cookie : request.getCookies()) {
                 if (ACCESS_COOKIE_NAME.equals(cookie.getName())) {
                     return cookie.getValue();
                 }
             }
         }
-        // 2. Fallback: Bearer token in Authorization header
-        String header = request.getHeader("Authorization");
-        if (header != null && header.startsWith("Bearer ")) {
-            return header.substring(7);
+        // 2️⃣ Fallback: Authorization header
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            return authHeader.substring(7);
         }
         return null;
     }
 
-    /**
-     * Get the 'sub' claim from JWT (user ID)
-     */
     public String getSubject(String token) {
         return extractSubject(token);
     }
 
-    /**
-     * Get the 'roles' claim from JWT as a list of strings
-     */
     public List<String> getRoles(String token) {
         return extractRoles(token);
+    }
+
+    // ---------------- CONSTANTS ----------------
+    public static String getAccessCookieName() {
+        return ACCESS_COOKIE_NAME;
+    }
+
+    public static String getRefreshCookieName() {
+        return REFRESH_COOKIE_NAME;
     }
 }

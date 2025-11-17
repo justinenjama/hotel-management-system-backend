@@ -60,4 +60,9 @@ public interface BookingService {
             Long bookingId,
             RestaurantOrderRequestDTO request,
             Long currentUserId);
+
+    ResponseEntity<ReceptionistBookingsResponseDTO> getReceptionistBookingsAndContributions(Long currentUserId);
+
+    ResponseEntity<List<InvoiceResponseDTO>> getReceptionistInvoices(Long currentUserId);
 }
+
