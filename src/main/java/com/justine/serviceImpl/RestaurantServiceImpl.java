@@ -2,6 +2,7 @@ package com.justine.serviceImpl;
 
 import com.justine.dtos.request.*;
 import com.justine.dtos.response.*;
+import com.justine.enums.BookingStatus;
 import com.justine.enums.OrderStatus;
 import com.justine.enums.PaymentStatus;
 import com.justine.model.*;
@@ -34,12 +35,13 @@ public class RestaurantServiceImpl implements RestaurantService {
     private final OrderItemRepository orderItemRepository;
     private final PaymentRepository paymentRepository;
     private final InvoiceRepository invoiceRepository;
+    private final BookingRepository bookingRepository;
     private final AuditLogService auditLogService;
     private final StaffRepository staffRepository;
     private final HotelRepository hotelRepository;
     private final CloudinaryService cloudinaryService;
 
-    // Utility: check admin by user ID
+    // check admin by user ID
     private boolean isAdmin(Long currentUserId) {
         return staffRepository.findById(currentUserId)
                 .map(staff -> "ADMIN".equalsIgnoreCase(String.valueOf(staff.getRole())))
@@ -60,7 +62,7 @@ public class RestaurantServiceImpl implements RestaurantService {
             String imageUrl = null;
             if (imageFile != null && !imageFile.isEmpty()) {
                 Map<String, String> uploadResult = cloudinaryService.uploadFileWithEagerSizes(imageFile, "food_items");
-                imageUrl = uploadResult.get("large"); // store the large version
+                imageUrl = uploadResult.get("large");
             }
 
             FoodItem item = FoodItem.builder()
@@ -234,11 +236,11 @@ public class RestaurantServiceImpl implements RestaurantService {
     @Transactional
     public ResponseEntity<PaymentResponseDTO> makeRestaurantOrderPayment(PaymentRequestDTO dto, Long currentUserId) {
         try {
-            // 1️⃣ Fetch order
+            // Fetch order
             RestaurantOrder order = orderRepository.findById(dto.getRestaurantOrderId())
                     .orElseThrow(() -> new RuntimeException("Restaurant order not found"));
 
-            // 2️⃣ Prevent paying again if already paid
+            // Prevent paying again if already paid
             Invoice invoice = order.getInvoice();
             if (invoice != null && invoice.isPaid()) {
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
@@ -246,7 +248,7 @@ public class RestaurantServiceImpl implements RestaurantService {
 
             double totalAmount = order.getTotalAmount() != null ? order.getTotalAmount() : 0.0;
 
-            // 3️⃣ Create or update payment
+            // Create or update payment
             Payment payment = order.getPayment() != null ? order.getPayment() : new Payment();
             payment.setRestaurantOrder(order);
             payment.setAmount(totalAmount);
@@ -259,7 +261,7 @@ public class RestaurantServiceImpl implements RestaurantService {
             order.setPayment(payment);
             order.setStatus(OrderStatus.SERVED);
 
-            // 4️⃣ Create or update invoice
+            // Create or update invoice
             if (invoice == null) {
                 invoice = Invoice.builder()
                         .invoiceNumber("INV-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase())
@@ -279,13 +281,13 @@ public class RestaurantServiceImpl implements RestaurantService {
             }
             invoiceRepository.save(invoice);
 
-            // 5️⃣ Generate and upload new PDF
+            // Generate and upload new PDF
             generateAndUploadInvoicePdf(invoice);
 
             order.setInvoice(invoice);
             orderRepository.save(order);
 
-            // 6️⃣ Audit log
+            // Audit log
             auditLogService.logRestaurant(
                     order.getGuest().getId(),
                     "MAKE_PAYMENT_SUCCESS",
@@ -447,6 +449,35 @@ public class RestaurantServiceImpl implements RestaurantService {
         } catch (Exception e) {
             auditLogService.logRestaurant(currentUserId, "GET_ALL_ORDERS_ERROR", null, Map.of("error", e.getMessage()));
             log.error("Error retrieving all orders: {}", e.getMessage());
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    @Override
+    public ResponseEntity<RestaurantOrderResponseDTO> createOrderForBooking(
+            RestaurantOrderDTO dto, Long currentUserId) {
+
+        try {
+            Guest guest = guestRepository.findById(currentUserId)
+                    .orElseThrow(() -> new RuntimeException("Guest not found"));
+
+            // Check if guest has at least one active booking
+            Booking activeBooking = guest.getBookings().stream()
+                    .filter(b -> b.getStatus() != BookingStatus.CHECKED_OUT)
+                    .findFirst()
+                    .orElseThrow(() ->
+                            new RuntimeException("You do not have any active booking. Order not allowed."));
+
+            if (activeBooking == null) {
+                log.warn("Guest {} attempted to create order without active booking", currentUserId);
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+            }
+
+            // If active booking exists, proceed with order creation
+            return createOrder(dto, currentUserId);
+
+        } catch (Exception e) {
+            log.error("Error creating order for guest {}: {}", currentUserId, e.getMessage(), e);
             return ResponseEntity.internalServerError().build();
         }
     }

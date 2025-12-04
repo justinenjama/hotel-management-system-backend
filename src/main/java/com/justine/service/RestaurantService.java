@@ -37,4 +37,6 @@ public interface RestaurantService {
     ResponseEntity<RestaurantOrderResponseDTO> cancelOrder(Long orderId, Long currentUserId);
 
     ResponseEntity<List<RestaurantOrderResponseDTO>> getAllOrders(Long currentUserId);
+
+    ResponseEntity<RestaurantOrderResponseDTO> createOrderForBooking(RestaurantOrderDTO dto, Long currentUserId);
 }

@@ -1,5 +1,6 @@
 package com.justine.model;
 
+import com.justine.enums.DeliveryStatus;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -35,4 +36,12 @@ public class Notification {
     @ManyToOne
     @JoinColumn(name = "staff_id")
     private Staff staff;
+
+    @Enumerated(EnumType.STRING)
+    private DeliveryStatus emailStatus;
+
+    @Enumerated(EnumType.STRING)
+    private DeliveryStatus smsStatus;
+
+    private int smsRetryCount;
 }

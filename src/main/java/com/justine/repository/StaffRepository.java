@@ -23,4 +23,8 @@ public interface StaffRepository extends JpaRepository<Staff, Long> {
     @Query("SELECT s FROM Staff s WHERE s.email = :email")
     @QueryHints(@QueryHint(name = "org.hibernate.cacheable", value = "true"))
     Optional<Staff> findByEmail(String email);
+
+    @Query("SELECT s FROM Staff s WHERE s.hotel.id = :hotelId")
+    List<Staff> findByHotelId(@Param("hotelId") Long hotelId);
+
 }

@@ -1,7 +1,7 @@
-package com.justine.wifi.service;
+package com.justine.service;
 
-import com.justine.wifi.dtos.request.STKPushRequestDTO;
-import com.justine.wifi.dtos.response.STKPushResponseDTO;
+import com.justine.dtos.request.STKPushRequestDTO;
+import com.justine.dtos.response.STKPushResponseDTO;
 
 public interface MpesaService {
 

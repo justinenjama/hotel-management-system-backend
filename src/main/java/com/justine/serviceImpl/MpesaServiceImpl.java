@@ -1,17 +1,13 @@
-package com.justine.wifi.serviceImpl;
+package com.justine.serviceImpl;
 
-import com.justine.wifi.dtos.request.STKPushRequestDTO;
-import com.justine.wifi.dtos.response.STKPushResponseDTO;
-import com.justine.wifi.enums.PaymentStatus;
-import com.justine.wifi.enums.SessionStatus;
-import com.justine.wifi.model.Payment;
-import com.justine.wifi.model.Plan;
-import com.justine.wifi.model.Session;
-import com.justine.wifi.model.User;
-import com.justine.wifi.repository.PaymentRepository;
-import com.justine.wifi.repository.SessionRepository;
-import com.justine.wifi.service.MpesaService;
-import lombok.RequiredArgsConstructor;
+import com.justine.dtos.request.STKPushRequestDTO;
+import com.justine.dtos.response.STKPushResponseDTO;
+import com.justine.enums.PaymentMethod;
+import com.justine.enums.PaymentStatus;
+import com.justine.model.Guest;
+import com.justine.model.Payment;
+import com.justine.repository.PaymentRepository;
+import com.justine.service.MpesaService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
@@ -19,16 +15,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import java.nio.charset.StandardCharsets;
-import java.time.LocalDateTime;
 import java.util.*;
 
 @Service
 @Slf4j
-@RequiredArgsConstructor
 public class MpesaServiceImpl implements MpesaService {
 
     private final PaymentRepository paymentRepository;
-    private final SessionRepository sessionRepository;
     private final RestTemplate restTemplate = new RestTemplate();
 
     @Value("${mpesa.consumer-key}")
@@ -48,6 +41,10 @@ public class MpesaServiceImpl implements MpesaService {
 
     @Value("${mpesa.environment:sandbox}")
     private String environment;
+
+    public MpesaServiceImpl(PaymentRepository paymentRepository) {
+        this.paymentRepository = paymentRepository;
+    }
 
     private String getBaseUrl() {
         return environment.equalsIgnoreCase("production") ?
@@ -222,19 +219,11 @@ public class MpesaServiceImpl implements MpesaService {
                 paymentRepository.save(payment);
 
                 if (resultCode == 0) {
-                    User user = payment.getUser();
-                    Plan plan = payment.getPlan();
-                    LocalDateTime endTime = LocalDateTime.now().plusHours(plan.getDuration());
+                    Guest user = payment.getGuest();
 
-                    Session session = new Session();
-                    session.setUser(user);
-                    session.setPlan(plan);
-                    session.setSessionToken(generateSessionToken());
-                    session.setEndTime(endTime);
-                    session.setStatus(SessionStatus.ACTIVE);
-
-                    sessionRepository.save(session);
-                    log.info("Created session for user {} with token {}", user.getId(), session.getSessionToken());
+                    payment.setPaymentMethod(PaymentMethod.MPESA);
+                    payment.setStatus(PaymentStatus.PAID);
+                    log.info("Payment successful for userId {}", user.getId());
                 }
             } else {
                 log.warn("Payment record not found for checkoutRequestId {}", checkoutRequestId);

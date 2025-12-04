@@ -67,7 +67,6 @@ public class PaymentServiceImpl implements PaymentService {
             Payment saved = paymentRepository.save(payment);
             booking.setPayment(saved);
 
-            // Create InvoiceRequestDTO directly
             InvoiceRequestDTO invoiceRequest = InvoiceRequestDTO.builder()
                     .bookingId(booking.getId())
                     .invoiceNumber("INV-" + System.currentTimeMillis())
@@ -76,7 +75,6 @@ public class PaymentServiceImpl implements PaymentService {
                     .paid(true)
                     .build();
 
-            // Generate invoice
             invoiceService.generateInvoice(invoiceRequest, currentUserId);
 
             auditLogService.logPayment(

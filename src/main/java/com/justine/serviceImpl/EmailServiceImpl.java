@@ -58,9 +58,9 @@ public class EmailServiceImpl implements EmailService {
             helper.setSubject(subject);
             helper.setText(text, true);
             mailSender.send(mimeMessage);
-            log.info("📩 Email sent successfully to {}", to);
+            log.info("Email sent successfully to {}", to);
         } catch (Exception e) {
-            log.error("❌ Failed to send email to {}: {}", to, e.getMessage());
+            log.error("Failed to send email to {}: {}", to, e.getMessage());
         }
     }
 
@@ -68,7 +68,7 @@ public class EmailServiceImpl implements EmailService {
     public void sendEmail(String to, String subject, String text, HttpServletRequest request) {
         // You can reuse your existing logic, optionally log or handle the IP
         String ip = getClientIp(request);
-        log.info("📨 Sending email to {} (IP={})", to, ip);
+        log.info("Sending email to {} (IP={})", to, ip);
 
         try {
             MimeMessage mimeMessage = mailSender.createMimeMessage();
@@ -77,14 +77,12 @@ public class EmailServiceImpl implements EmailService {
             helper.setSubject(subject);
             helper.setText(text, true);
             mailSender.send(mimeMessage);
-            log.info("📩 Email sent successfully to {} (IP={})", to, ip);
+            log.info("Email sent successfully to {} (IP={})", to, ip);
         } catch (Exception e) {
-            log.error("❌ Failed to send email to {} (IP={}): {}", to, ip, e.getMessage());
+            log.error("Failed to send email to {} (IP={}): {}", to, ip, e.getMessage());
         }
     }
 
-
-    @Async
     @Override
     public void sendEmailToMultiple(String[] to, String subject, String text) {
         try {
@@ -94,13 +92,12 @@ public class EmailServiceImpl implements EmailService {
             helper.setSubject(subject);
             helper.setText(text, true);
             mailSender.send(mimeMessage);
-            log.info("📩 Bulk email sent successfully to {}", (Object) to);
+            log.info("Bulk email sent successfully to {}", (Object) to);
         } catch (Exception e) {
-            log.error("❌ Failed to send bulk email: {}", e.getMessage());
+            log.error("Failed to send bulk email: {}", e.getMessage());
         }
     }
 
-    @Async
     @Override
     public void sendEmailWithBcc(String from, String[] to, String[] bcc, String subject, String text) {
         try {
@@ -112,10 +109,10 @@ public class EmailServiceImpl implements EmailService {
             helper.setSubject(subject);
             helper.setText(text, true);
             mailSender.send(mimeMessage);
-            log.info("📩 Email with BCC sent ({} visible, {} bcc)",
+            log.info("Email with BCC sent ({} visible, {} bcc)",
                     (to != null ? to.length : 0), (bcc != null ? bcc.length : 0));
         } catch (Exception e) {
-            log.error("❌ Failed to send email with BCC: {}", e.getMessage());
+            log.error("Failed to send email with BCC: {}", e.getMessage());
         }
     }
 
@@ -148,7 +145,7 @@ public class EmailServiceImpl implements EmailService {
             List<String> admins = getAdminEmails();
             if (admins.isEmpty()) return;
 
-            String subject = "⚠️ Rate Limit Alert: Repeated Abuse Detected";
+            String subject = "Rate Limit Alert: Repeated Abuse Detected";
             String message = """
                     <p>Dear Admin,</p>
                     <p>The system detected repeated rate-limit breaches:</p>
@@ -160,9 +157,9 @@ public class EmailServiceImpl implements EmailService {
                     """.formatted(event.getIp(), event.getConsecutiveDays());
 
             sendEmailToMultiple(admins.toArray(new String[0]), subject, message);
-            log.info("🚨 Admin alert sent for repeated abuse by IP {}", event.getIp());
+            log.info("Admin alert sent for repeated abuse by IP {}", event.getIp());
         } catch (Exception e) {
-            log.error("❌ Failed to handle rate-limit alert event: {}", e.getMessage());
+            log.error("Failed to handle rate-limit alert event: {}", e.getMessage());
         }
     }
 }

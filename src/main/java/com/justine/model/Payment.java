@@ -6,6 +6,8 @@ import com.justine.enums.PaymentStatus;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.time.LocalDateTime;
+
 @Entity
 @Data
 @NoArgsConstructor
@@ -21,9 +23,6 @@ public class Payment {
     @Enumerated(EnumType.STRING)
     private PaymentMethod method;
 
-    @Enumerated(EnumType.STRING)
-    private PaymentStatus status;
-
     private java.time.LocalDateTime paymentDate;
     private String transactionId;
 
@@ -34,5 +33,26 @@ public class Payment {
     @OneToOne
     @JoinColumn(name = "restaurant_order_id")
     private RestaurantOrder restaurantOrder;
+
+    @ManyToOne
+    @JoinColumn(name = "user_id")
+    private Guest guest;
+    private String mpesaReceiptNumber;
+
+    @Column(unique = true)
+    private String checkoutRequestId;
+
+    @Enumerated(EnumType.STRING)
+    @Builder.Default
+    private PaymentStatus status = PaymentStatus.PENDING;
+
+    @Enumerated(EnumType.STRING)
+    @Builder.Default
+    private PaymentMethod paymentMethod = PaymentMethod.MPESA;
+
+    @Builder.Default
+    private LocalDateTime createdAt = LocalDateTime.now();
+    @Builder.Default
+    private LocalDateTime updatedAt = LocalDateTime.now();
 
 }

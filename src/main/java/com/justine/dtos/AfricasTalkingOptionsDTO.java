@@ -1,4 +1,4 @@
-package com.justine.wifi.dtos;
+package com.justine.dtos;
 
 import lombok.Data;
 

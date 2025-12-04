@@ -74,7 +74,7 @@ public class PasswordResetServiceImpl implements PasswordResetService {
 
         // Global rate limit per IP
         if (!rateLimitService.allowRequest(ip, "passwordResetRequest")) {
-            log.warn("🚫 Password reset rate limit exceeded for IP {} (email={})", ip, email);
+            log.warn("Password reset rate limit exceeded for IP {} (email={})", ip, email);
             auditLogService.logPasswordResetAction(
                     httpServletRequest,
                     AuditAction.FAILED.name(),
@@ -83,7 +83,6 @@ public class PasswordResetServiceImpl implements PasswordResetService {
             return;
         }
 
-        // Prevent enumeration: don’t reveal if email exists
         Optional<Guest> guestOpt = guestRepository.findByEmail(email);
         Optional<Staff> staffOpt = staffRepository.findByEmail(email);
 
@@ -100,10 +99,8 @@ public class PasswordResetServiceImpl implements PasswordResetService {
         String fullName = guestOpt.map(Guest::getFullName)
                 .orElseGet(() -> staffOpt.map(Staff::getFullName).orElse("User"));
 
-        // Invalidate old tokens
         tokenRepository.markAllTokensUsedForEmail(email);
 
-        // Generate and save new token
         String rawToken = UUID.randomUUID().toString();
         String hashedToken = BCrypt.hashpw(rawToken, BCrypt.gensalt());
 
@@ -115,8 +112,7 @@ public class PasswordResetServiceImpl implements PasswordResetService {
                 .build();
         tokenRepository.save(token);
 
-        // Send email asynchronously
-        String resetLink = "http://192.168.77.217:5173//reset-password?token=" + rawToken;
+        String resetLink = "http://192.168.137.207:5173/reset-password?token=" + rawToken;
 
         String message = """
                 <p>Hello %s,</p>
@@ -144,7 +140,7 @@ public class PasswordResetServiceImpl implements PasswordResetService {
         String ip = getClientIp();
 
         if (!rateLimitService.allowRequest(ip, "passwordResetConfirm")) {
-            log.warn("🚫 Rate limit exceeded for password reset confirmation from IP {}", ip);
+            log.warn("Rate limit exceeded for password reset confirmation from IP {}", ip);
             auditLogService.logPasswordResetAction(
                     httpServletRequest,
                     AuditAction.FAILED.name(),
@@ -197,7 +193,7 @@ public class PasswordResetServiceImpl implements PasswordResetService {
                     "Password successfully reset for email: " + email + " (IP=" + ip + ")"
             );
 
-            log.info("✅ Password reset successful for {} (IP={})", email, ip);
+            log.info("Password reset successful for {} (IP={})", email, ip);
 
         } catch (RuntimeException e) {
             auditLogService.logPasswordResetAction(

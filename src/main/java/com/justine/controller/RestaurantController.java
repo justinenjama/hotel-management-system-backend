@@ -108,4 +108,11 @@ public class RestaurantController {
         return restaurantService.getAllOrders(getCurrentUserId(auth));
     }
 
+    @PostMapping("/order/for-booking")
+    public ResponseEntity<RestaurantOrderResponseDTO> createOrderForBooking(
+            @RequestBody RestaurantOrderDTO dto,
+            Authentication auth) {
+        return restaurantService.createOrderForBooking(dto, getCurrentUserId(auth));
+    }
+
 }

@@ -39,20 +39,19 @@ public class TestimonialServiceImpl implements TestimonialService {
         this.auditLogService = auditLogService;
     }
 
-    // ✅ Helper to get authenticated Guest safely
     private Guest getGuestById(Long userId) {
         return guestRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("Guest not found with ID: " + userId));
     }
 
-    // ✅ Check if this user is admin
+    // Check if this user is admin
     private boolean isAdmin(Long userId) {
         return staffRepository.findById(userId)
                 .map(staff -> "ADMIN".equalsIgnoreCase(String.valueOf(staff.getRole())))
                 .orElse(false);
     }
 
-    // ✅ Centralized Comment Mapper
+    // Centralized Comment Mapper
     private TestimonialCommentDTO toCommentDTO(TestimonialComment comment) {
         if (comment == null) return null;
 
@@ -65,7 +64,7 @@ public class TestimonialServiceImpl implements TestimonialService {
                 .build();
     }
 
-    // ✅ Centralized Testimonial Mapper
+    // Centralized Testimonial Mapper
     private TestimonialDTO toDTO(Testimonial testimonial) {
         if (testimonial == null) return null;
 
@@ -102,12 +101,12 @@ public class TestimonialServiceImpl implements TestimonialService {
 
             return toDTO(testimonial);
         } catch (Exception e) {
-            log.error("❌ Failed to add testimonial: {}", e.getMessage());
+            log.error("Failed to add testimonial: {}", e.getMessage());
             throw e;
         }
     }
 
-    // ✅ Create Comment + Audit Log
+    // Create Comment + Audit Log
     @Override
     public TestimonialCommentDTO addComment(Long testimonialId, String content, Long currentUserId) {
         try {
@@ -128,12 +127,12 @@ public class TestimonialServiceImpl implements TestimonialService {
 
             return toCommentDTO(comment);
         } catch (Exception e) {
-            log.error("❌ Failed to add comment: {}", e.getMessage());
+            log.error("Failed to add comment: {}", e.getMessage());
             throw e;
         }
     }
 
-    // ✅ Toggle Like + Audit Log
+    // Toggle Like + Audit Log
     @Override
     public String toggleLike(Long testimonialId, Long currentUserId) {
         try {
@@ -162,12 +161,12 @@ public class TestimonialServiceImpl implements TestimonialService {
                 return "Like added";
             }
         } catch (Exception e) {
-            log.error("❌ Failed to toggle like: {}", e.getMessage());
+            log.error("Failed to toggle like: {}", e.getMessage());
             throw e;
         }
     }
 
-    // ✅ Get All
+    // Get All
     @Override
     public List<TestimonialDTO> getAllTestimonials() {
         return testimonialRepository.findAll()
@@ -176,7 +175,7 @@ public class TestimonialServiceImpl implements TestimonialService {
                 .collect(Collectors.toList());
     }
 
-    // ✅ Update Testimonial + Audit Log
+    // Update Testimonial + Audit Log
     @Override
     public TestimonialDTO updateTestimonial(Long testimonialId, String newContent, Long currentUserId) {
         try {
@@ -195,12 +194,12 @@ public class TestimonialServiceImpl implements TestimonialService {
 
             return toDTO(testimonial);
         } catch (Exception e) {
-            log.error("❌ Failed to update testimonial: {}", e.getMessage());
+            log.error("Failed to update testimonial: {}", e.getMessage());
             throw e;
         }
     }
 
-    // ✅ Delete Testimonial + Audit Log
+    // Delete Testimonial + Audit Log
     @Override
     public boolean deleteTestimonial(Long testimonialId, Long currentUserId) {
         try {
@@ -218,12 +217,12 @@ public class TestimonialServiceImpl implements TestimonialService {
 
             return true;
         } catch (Exception e) {
-            log.error("❌ Failed to delete testimonial: {}", e.getMessage());
+            log.error("Failed to delete testimonial: {}", e.getMessage());
             throw e;
         }
     }
 
-    // ✅ Get Comments
+    // Get Comments
     @Override
     public List<TestimonialCommentDTO> getCommentsByTestimonialId(Long testimonialId) {
         Testimonial testimonial = testimonialRepository.findById(testimonialId)
@@ -235,7 +234,7 @@ public class TestimonialServiceImpl implements TestimonialService {
                 .collect(Collectors.toList());
     }
 
-    // ✅ Update Comment + Audit Log
+    // Update Comment + Audit Log
     @Override
     public TestimonialCommentDTO updateComment(Long testimonialId, Long commentId, String newContent, Long currentUserId) {
         try {
@@ -258,12 +257,12 @@ public class TestimonialServiceImpl implements TestimonialService {
 
             return toCommentDTO(comment);
         } catch (Exception e) {
-            log.error("❌ Failed to update comment: {}", e.getMessage());
+            log.error("Failed to update comment: {}", e.getMessage());
             throw e;
         }
     }
 
-    // ✅ Delete Comment + Audit Log
+    // Delete Comment + Audit Log
     @Override
     public boolean deleteComment(Long testimonialId, Long commentId, Long currentUserId) {
         try {
@@ -285,7 +284,7 @@ public class TestimonialServiceImpl implements TestimonialService {
 
             return true;
         } catch (Exception e) {
-            log.error("❌ Failed to delete comment: {}", e.getMessage());
+            log.error("Failed to delete comment: {}", e.getMessage());
             throw e;
         }
     }

@@ -79,7 +79,6 @@ public class BookingServiceImpl implements BookingService {
     @Transactional
     public ResponseEntity<BookingResponseDTO> createBooking(BookingRequestDTO dto, Long currentUserId) {
         try {
-            // ---------------- Permission Check ----------------
             boolean admin = isAdmin();
             boolean receptionist = isReceptionist(); // new helper
 
@@ -91,13 +90,11 @@ public class BookingServiceImpl implements BookingService {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
             }
 
-            // ---------------- Room Availability ----------------
             Room room = roomRepository.findById(dto.getRoomId())
                     .orElseThrow(() -> new RuntimeException("Room not found"));
 
             if (!room.isAvailable()) return ResponseEntity.status(HttpStatus.CONFLICT).build();
 
-            // ---------------- Create Booking ----------------
             Booking booking = Booking.builder()
                     .bookingCode(UUID.randomUUID().toString().replace("-", "").substring(0, 10).toUpperCase())
                     .checkInDate(dto.getCheckInDate())
@@ -108,14 +105,12 @@ public class BookingServiceImpl implements BookingService {
                     .room(room)
                     .build();
 
-            // Assign staff if booked by admin or receptionist
             if (admin || receptionist) {
                 Staff staff = staffRepository.findById(currentUserId)
                         .orElseThrow(() -> new RuntimeException("Staff not found"));
                 booking.setStaff(staff);
             }
 
-            // ---------------- Attach Services ----------------
             if (dto.getServiceIds() != null && !dto.getServiceIds().isEmpty()) {
                 List<com.justine.model.Service> services = serviceRepository.findAllById(dto.getServiceIds());
                 booking.setServices(new ArrayList<>(services));
@@ -127,7 +122,6 @@ public class BookingServiceImpl implements BookingService {
 
             Booking saved = bookingRepository.save(booking);
 
-            // ---------------- Calculate Total Amount ----------------
             long nights = ChronoUnit.DAYS.between(saved.getCheckInDate(), saved.getCheckOutDate());
             nights = Math.max(nights, 1); // at least 1 night
 
@@ -139,7 +133,6 @@ public class BookingServiceImpl implements BookingService {
                         .sum();
             }
 
-            // ---------------- Generate Invoice ----------------
             Invoice invoice = Invoice.builder()
                     .invoiceNumber("INV-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase())
                     .issuedDate(LocalDate.now())
@@ -154,7 +147,6 @@ public class BookingServiceImpl implements BookingService {
             saved.setInvoice(invoice);
             bookingRepository.save(saved);
 
-            // ---------------- Audit Logging ----------------
             auditLogService.logBooking(
                     guest.getId(),
                     "AUTO_GENERATE_INVOICE_SUCCESS",
@@ -188,22 +180,18 @@ public class BookingServiceImpl implements BookingService {
         }
     }
 
-
-    // ------------------ Make Booking Payment ------------------
     @Override
     @Transactional
     public ResponseEntity<PaymentResponseDTO> makePayment(PaymentRequestDTO dto, Long currentUserId) {
         try {
-            // 1️⃣ Fetch booking
+
             Booking booking = bookingRepository.findById(dto.getBookingId())
                     .orElseThrow(() -> new RuntimeException("Booking not found"));
 
-            // 2️⃣ Prevent paying again if already paid
             if (booking.getPayment() != null && booking.getPayment().getStatus() == PaymentStatus.PAID) {
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
             }
 
-            // 3️⃣ Calculate total cost
             long nights = ChronoUnit.DAYS.between(booking.getCheckInDate(), booking.getCheckOutDate());
             double roomCost = booking.getRoom().getPricePerNight() * nights;
 
@@ -222,7 +210,6 @@ public class BookingServiceImpl implements BookingService {
 
             double totalCost = roomCost + serviceCost + ordersCost;
 
-            // 4️⃣ Create or update payment
             Payment payment = booking.getPayment() != null ? booking.getPayment() : new Payment();
             payment.setBooking(booking);
             payment.setAmount(totalCost);
@@ -235,7 +222,6 @@ public class BookingServiceImpl implements BookingService {
             booking.setPayment(payment);
             booking.setStatus(BookingStatus.CHECKED_IN);
 
-            // 4️⃣a Clear the cart after payment and batch-update order items
             booking.getOrders().stream()
                     .filter(o -> o.getCart() && o.getStatus() == OrderStatus.PENDING)
                     .findFirst()
@@ -255,7 +241,6 @@ public class BookingServiceImpl implements BookingService {
                         restaurantOrderRepository.save(cart);
                     });
 
-            // 5️⃣ Create or update invoice
             Invoice invoice = booking.getInvoice();
             if (invoice == null) {
                 invoice = Invoice.builder()
@@ -275,13 +260,11 @@ public class BookingServiceImpl implements BookingService {
             }
             invoiceRepository.save(invoice);
 
-            // 6️⃣ Generate and upload new PDF
             generateAndUploadInvoicePdf(invoice);
 
             booking.setInvoice(invoice);
             bookingRepository.save(booking);
 
-            // 7️⃣ Audit log
             auditLogService.logBooking(
                     booking.getGuest().getId(),
                     "MAKE_PAYMENT_SUCCESS",
@@ -456,7 +439,7 @@ public class BookingServiceImpl implements BookingService {
                         .body(null);
             }
 
-            // ✅ Hotel rule enforcement
+            // Hotel rule enforcement
             Long bookingHotelId = booking.getRoom().getHotel().getId();
 
             for (com.justine.model.Service service : services) {
@@ -512,18 +495,15 @@ public class BookingServiceImpl implements BookingService {
             Booking booking = bookingRepository.findById(bookingId)
                     .orElseThrow(() -> new RuntimeException("Booking not found"));
 
-            // Update booking status
             booking.setStatus(BookingStatus.CANCELLED);
             bookingRepository.save(booking);
 
-            // Make room available again
             Room room = booking.getRoom();
             if (room != null) {
                 room.setAvailable(true);
                 roomRepository.save(room);
             }
 
-            // Delete invoice from Cloudinary and remove record from DB
             Invoice invoice = booking.getInvoice();
             if (invoice != null) {
                 if (invoice.getInvoiceUrl() != null) {
@@ -540,7 +520,7 @@ public class BookingServiceImpl implements BookingService {
                 }
 
                 invoiceRepository.delete(invoice);
-                booking.setInvoice(null); // ensure booking reflects deleted invoice
+                booking.setInvoice(null);
             }
 
             auditLogService.logBooking(
@@ -550,7 +530,6 @@ public class BookingServiceImpl implements BookingService {
                     Map.of("roomId", room != null ? room.getId() : null)
             );
 
-            // Return updated BookingResponseDTO with invoiceExists = false
             return ResponseEntity.ok(toBookingResponse(booking));
 
         } catch (Exception e) {
@@ -1006,13 +985,13 @@ public class BookingServiceImpl implements BookingService {
             order.setOrderItems(orderItems);
             order.setTotalAmount(total);
 
-            // ✅ Invoice management
+            // Invoice management
             Invoice invoice = booking.getInvoice();
             if (invoice == null) {
                 invoice = Invoice.builder()
                         .booking(booking)
                         .totalAmount(total)
-                        .build();
+                        .paid(false).build();
                 booking.setInvoice(invoice);
             } else {
                 invoice.setTotalAmount(invoice.getTotalAmount() + total);
@@ -1087,13 +1066,13 @@ public class BookingServiceImpl implements BookingService {
                     "totalUnpaidRevenue", totalUnpaidRevenue
             );
 
-            // ✅ Build Response DTO
+            // Build Response DTO
             ReceptionistBookingsResponseDTO response = ReceptionistBookingsResponseDTO.builder()
                     .bookings(bookingDTOs)
                     .contributions(contributions)
                     .build();
 
-            // ✅ Audit Log
+            // Audit Log
             auditLogService.logBooking(
                     currentUserId,
                     "GET_RECEPTIONIST_BOOKINGS_SUCCESS",

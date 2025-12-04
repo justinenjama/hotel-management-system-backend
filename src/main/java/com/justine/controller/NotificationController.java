@@ -1,9 +1,12 @@
 package com.justine.controller;
 
 import com.justine.dtos.request.NotificationRequestDto;
+import com.justine.dtos.response.NotificationResponseDto;
 import com.justine.service.NotificationService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/notifications")
@@ -43,5 +46,10 @@ public class NotificationController {
                                                  @RequestHeader(value = "X-Actor-Id", required = false) Long actorId) {
         notificationService.alertHotel(hotelId, actorId, payload);
         return ResponseEntity.ok().body("Emergency alert sent to all active guests and staff in hotel ID " + hotelId);
+    }
+
+    @GetMapping("/all")
+    public ResponseEntity<List<NotificationResponseDto>> getAllNotifications(){
+        return notificationService.getAllAlerts();
     }
 }

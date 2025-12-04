@@ -1,5 +1,5 @@
 package com.justine.enums;
 
 public enum PaymentStatus {
-    PENDING, PAID, FAILED, REFUNDED
+    PENDING, PAID, FAILED, COMPLETED, REFUNDED
 }
